@@ -6,12 +6,64 @@ HAclaw 是一个面向中文用户的 Home Assistant AI Agent 插件，目标是
 
 ## 项目状态
 
-当前处于 v1.0 设计与原型规划阶段。仓库内暂不要求立即编写代码，优先把产品边界、架构、安全策略和开发规则沉淀清楚。
+当前已进入 v1.0 开发阶段。第一批代码先落在可测试的安全地基上：Home Assistant 自定义集成骨架、统一 OpenAI-compatible provider、严格 JSON Agent 协议、服务风险分类和 Xiaomi 实体识别辅助。
 
-| 文档 | 用途 |
+| 路径 | 用途 |
 | --- | --- |
 | `README.md` | 项目说明、功能范围、架构方向和路线图 |
 | `AGENTS.md` | 编码 Agent 和贡献者必须遵守的技术护栏 |
+| `custom_components/haclaw/` | Home Assistant 自定义集成代码 |
+| `tests/` | v1.0 核心安全能力的单元测试 |
+
+当前验证命令：
+
+```bash
+scripts/run_tests.sh
+~/.venvs/haclaw-ha/bin/hass --script check_config -c ~/.ha-dev/haclaw
+```
+
+## 本地开发环境
+
+HAclaw 是 Home Assistant 自定义集成。推荐优先使用 Home Assistant 官方 devcontainer；如果本机没有 Docker，也可以使用本仓库的本地 venv 脚本。
+
+当前本地脚本默认使用 Homebrew Python 3.14：
+
+```bash
+scripts/setup_ha_dev_env.sh
+```
+
+脚本会完成：
+
+- 创建 `~/.venvs/haclaw-ha`
+- 安装 `homeassistant`、`pytest`、`pytest-homeassistant-custom-component`
+- 创建 `~/.ha-dev/haclaw`
+- 将当前仓库的 `custom_components` 软链到 HA 配置目录
+
+运行基础测试：
+
+```bash
+scripts/run_tests.sh
+```
+
+运行 Home Assistant 配置检查：
+
+```bash
+~/.venvs/haclaw-ha/bin/hass --script check_config -c ~/.ha-dev/haclaw
+```
+
+启动本地 Home Assistant：
+
+```bash
+scripts/run_hass_dev.sh
+```
+
+启动后打开：
+
+```text
+http://localhost:8123
+```
+
+首次进入 HA UI 后，在“设置 -> 设备与服务 -> 添加集成”中搜索 `HAclaw`。测试配置时可以填入任意 OpenAI-compatible 服务商的 API key、Base URL 和模型；连接测试会在后端执行，错误会脱敏显示。
 
 ## 为什么做 HAclaw
 

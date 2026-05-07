@@ -1,0 +1,45 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up HAclaw",
+        "description": "Configure an OpenAI-compatible model provider.",
+        "data": {
+          "provider_preset": "Provider preset",
+          "api_key": "API key",
+          "base_url": "Base URL",
+          "model": "Model",
+          "timeout": "Timeout"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to provider.",
+      "invalid_api_key": "Invalid API key.",
+      "invalid_base_url": "Invalid Base URL.",
+      "invalid_model": "Invalid model.",
+      "model_not_found": "Model not found.",
+      "rate_limited": "Provider rate limit reached.",
+      "timeout": "Provider request timed out.",
+      "empty_response": "Provider returned an empty response.",
+      "json_parse_error": "Provider returned invalid JSON.",
+      "provider_error": "Provider returned an error.",
+      "unknown": "Unexpected error."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Edit HAclaw provider",
+        "description": "Update provider settings and test the connection.",
+        "data": {
+          "provider_preset": "Provider preset",
+          "api_key": "API key",
+          "base_url": "Base URL",
+          "model": "Model",
+          "timeout": "Timeout"
+        }
+      }
+    }
+  }
+}

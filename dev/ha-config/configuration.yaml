@@ -1,0 +1,20 @@
+config:
+
+frontend:
+
+http:
+  server_host: 0.0.0.0
+  server_port: 8123
+
+logger:
+  default: info
+  logs:
+    custom_components.haclaw: debug
+
+homeassistant:
+  name: HAclaw Dev
+  latitude: 31.2304
+  longitude: 121.4737
+  elevation: 4
+  unit_system: metric
+  time_zone: Asia/Shanghai

@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.venv/
+venv/
+.ha-dev-config/
+.storage/
+home-assistant.log*
+home-assistant_v2.db*

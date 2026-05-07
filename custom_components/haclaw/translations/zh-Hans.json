@@ -1,0 +1,45 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "设置 HAclaw",
+        "description": "配置 OpenAI-compatible 模型服务商。",
+        "data": {
+          "provider_preset": "服务商预设",
+          "api_key": "API Key",
+          "base_url": "Base URL",
+          "model": "模型名称",
+          "timeout": "超时时间"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "无法连接到服务商。",
+      "invalid_api_key": "API key 无效或无权限。",
+      "invalid_base_url": "Base URL 无效。",
+      "invalid_model": "模型名称无效。",
+      "model_not_found": "模型不存在或 Base URL 不正确。",
+      "rate_limited": "服务商当前限流，请稍后再试。",
+      "timeout": "服务商请求超时。",
+      "empty_response": "服务商返回了空内容。",
+      "json_parse_error": "服务商返回内容不是合法 JSON。",
+      "provider_error": "服务商返回错误响应。",
+      "unknown": "发生未知错误。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "编辑 HAclaw 模型配置",
+        "description": "更新服务商配置并测试连接。",
+        "data": {
+          "provider_preset": "服务商预设",
+          "api_key": "API Key",
+          "base_url": "Base URL",
+          "model": "模型名称",
+          "timeout": "超时时间"
+        }
+      }
+    }
+  }
+}

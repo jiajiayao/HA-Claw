@@ -1,0 +1,11 @@
+{
+  "domain": "haclaw",
+  "name": "HAclaw",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/jiajia/HA-Claw",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/jiajia/HA-Claw/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
