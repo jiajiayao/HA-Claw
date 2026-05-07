@@ -19,6 +19,11 @@ DEFAULT_TEMPERATURE = 0.2
 DEFAULT_TOP_P = 0.9
 
 PROVIDER_PRESETS = {
+    "xiaomi_mimo": {
+        "name": "Xiaomi MiMo",
+        "base_url": "https://api.mimo-v2.com/v1",
+        "model": "mimo-v2-flash",
+    },
     "deepseek": {
         "name": "DeepSeek",
         "base_url": "https://api.deepseek.com",

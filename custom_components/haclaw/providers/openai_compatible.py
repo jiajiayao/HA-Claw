@@ -38,6 +38,14 @@ def redact_secret(secret: str | None) -> str:
 
 
 @dataclass(slots=True)
+class ChatCompletionResult:
+    """Parsed chat completion result with optional usage metadata."""
+
+    content: str
+    usage: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class OpenAICompatibleClient:
     """One client for OpenAI-compatible providers and gateways."""
 
@@ -94,6 +102,15 @@ class OpenAICompatibleClient:
 
     async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> str:
         """Call an OpenAI-compatible chat completions endpoint."""
+        result = await self.chat_with_usage(messages, **kwargs)
+        return result.content
+
+    async def chat_with_usage(
+        self,
+        messages: list[dict[str, Any]],
+        **kwargs: Any,
+    ) -> ChatCompletionResult:
+        """Call chat completions and preserve provider usage fields."""
         try:
             import aiohttp
         except ImportError as err:
@@ -126,14 +143,24 @@ class OpenAICompatibleClient:
         except aiohttp.ClientError as err:
             raise ProviderError("cannot_connect", "无法连接到 Provider Base URL。") from err
 
-        try:
-            content = response_data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as err:
-            raise ProviderError("invalid_response", "Provider 返回格式无法解析。") from err
+        return extract_chat_completion_result(response_data)
 
-        if not isinstance(content, str) or not content.strip():
-            raise ProviderError("empty_response", "Provider 返回了空内容。")
-        return content
+
+def extract_chat_completion_result(response_data: dict[str, Any]) -> ChatCompletionResult:
+    """Extract assistant content and optional usage from a chat response."""
+    try:
+        content = response_data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as err:
+        raise ProviderError("invalid_response", "Provider 返回格式无法解析。") from err
+
+    if not isinstance(content, str) or not content.strip():
+        raise ProviderError("empty_response", "Provider 返回了空内容。")
+
+    usage = response_data.get("usage")
+    return ChatCompletionResult(
+        content=content,
+        usage=usage if isinstance(usage, dict) else {},
+    )
 
 
 async def _read_json_response(response: Any) -> dict[str, Any]:

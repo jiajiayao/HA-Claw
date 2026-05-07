@@ -1,6 +1,6 @@
 # HAclaw
 
-HAclaw 是一个面向中文用户的 Home Assistant AI Agent 插件，目标是让用户可以用自然语言更安全地控制智能家居、生成自动化草稿、理解 Home Assistant 配置，并更好地适配国内大模型和小米 / 米家 / MIoT 生态。
+HAclaw 是一个面向中文用户的 Home Assistant AI Agent 插件，目标是让用户可以用自然语言更安全地控制智能家居、生成自动化草稿、理解 Home Assistant 配置，并更好地适配国内大模型和小米 / 米家 / MIoT 生态。小米 MiMo 模型支持是 HAclaw v1.0 的重点卖点之一。
 
 > 一句话定位：HAclaw，用中文控制 Home Assistant 的 AI 爪子。
 
@@ -70,7 +70,7 @@ http://localhost:8123
 Home Assistant 很强，但中文用户在实际使用中经常遇到几个痛点：
 
 - 设备、实体、区域、服务名称混杂，中文自然语言不容易准确映射到真实实体。
-- 国内模型服务商很多，DeepSeek、Qwen、Kimi、GLM、硅基流动、OneAPI、New API 等配置方式各不相同。
+- 国内模型服务商很多，Xiaomi MiMo、DeepSeek、Qwen、Kimi、GLM、硅基流动、OneAPI、New API 等配置方式各不相同。
 - 小米、米家、Aqara、Yeelight、Roborock、Dreame 等设备常通过不同集成进入 HA，实体识别和控制路径不统一。
 - 自动化和配置文件一旦写错，可能影响真实家庭环境，必须可预览、可确认、可回滚。
 
@@ -78,7 +78,7 @@ HAclaw 的目标不是让 AI 获得无限权限，而是做一个中文优先、
 
 ## v1.0 核心目标
 
-1. 国内模型适配：通过统一 OpenAI-compatible 客户端支持主流国内模型和自建网关。
+1. 国内模型适配：通过统一 OpenAI-compatible 客户端支持主流国内模型和自建网关，其中 Xiaomi MiMo 作为重点 Provider preset。
 2. 中文优先体验：优先匹配 `friendly_name`、区域、别名、厂商、型号和集成来源。
 3. 小米生态增强：通过 Home Assistant 实体和服务识别 Xiaomi / Mi Home / MIoT / Aqara / Yeelight / Roborock / Dreame 设备。
 4. 图形化模型接入：不同 LLM 的 API key、Base URL、模型名称和连接测试必须能通过 UI 或对话向导完成。
@@ -236,6 +236,7 @@ HAclaw v1.0 的默认策略是使用一个共享的 `OpenAICompatibleClient`，�
 
 | Provider | 默认 Base URL | 模型配置 |
 | --- | --- | --- |
+| Xiaomi MiMo | `https://api.mimo-v2.com/v1` 或用户配置 | `mimo-v2-flash`、`mimo-v2-pro`、`mimo-v2-omni` 等，以官方控制台为准 |
 | DeepSeek | `https://api.deepseek.com` | 用户可选或自定义 |
 | Qwen / DashScope | `https://dashscope.aliyuncs.com/compatible-mode/v1` | 用户可选或自定义 |
 | Kimi / Moonshot | `https://api.moonshot.cn/v1` 或 `https://api.moonshot.ai/v1` | 用户可选或自定义 |
@@ -270,9 +271,29 @@ HAclaw v1.0 的默认策略是使用一个共享的 `OpenAICompatibleClient`，�
 
 所有错误都不能暴露完整密钥。
 
+### Xiaomi MiMo 支持
+
+MiMo 对 HAclaw 有双重价值：
+
+- 它是小米自有模型，和 HAclaw 的小米 / 米家 / MIoT 设备增强方向天然契合。
+- 它面向中文、推理、代码和 Agent 工作流，适合作为 Home Assistant 自动化草稿、配置解释和工具调用规划的重点模型。
+
+v1.0 必须把 Xiaomi MiMo 作为一等 Provider preset，而不是只放在自定义 OpenAI-compatible endpoint 里让用户自己猜。
+
+MiMo 接入要求：
+
+- 在 Provider 列表中提供 `Xiaomi MiMo` 选项。
+- 允许用户填写 MiMo API key、Base URL 和 Model。
+- Base URL 和 Model 必须可覆盖，因为官方控制台、模型名和套餐策略可能变化。
+- UI 展示可使用 `MiMo-V2-Flash` 风格名称，实际 API model id 应以控制台为准，例如 `mimo-v2-flash`。
+- 提供连接测试，并展示脱敏后的中文错误。
+- 如果 API 返回 token usage，前端应展示本次请求用量和累计用量摘要。
+- 可在设置页提示用户 MiMo 体验账号 / 免费额度适合优先试用，但不要把额度写死为所有用户都有。
+- 默认使用文本 chat completions 能力；语音、视觉、TTS 等 MiMo 多模态能力先作为 v1.x 预留，不放进 v1.0 必做主链路。
+
 ### 接入方式要求
 
-不同 LLM 的接入必须优先通过图形化界面完成，也可以通过对话式配置向导完成。普通用户不应该为了接入 DeepSeek、Qwen、Kimi、GLM、SiliconFlow、OneAPI、New API 或自建 OpenAI-compatible 网关而手动编辑配置文件。
+不同 LLM 的接入必须优先通过图形化界面完成，也可以通过对话式配置向导完成。普通用户不应该为了接入 Xiaomi MiMo、DeepSeek、Qwen、Kimi、GLM、SiliconFlow、OneAPI、New API 或自建 OpenAI-compatible 网关而手动编辑配置文件。
 
 必须支持：
 
@@ -280,7 +301,7 @@ HAclaw v1.0 的默认策略是使用一个共享的 `OpenAICompatibleClient`，�
 - 在 options flow 或 HAclaw 设置页中修改 Provider、API key、Base URL、Model 和高级参数。
 - 提供 Provider preset，但允许用户覆盖 Base URL 和 Model。
 - 提供“测试连接”能力，返回脱敏、中文、可理解的错误信息。
-- 允许通过对话补全配置，例如“把模型切到 DeepSeek”或“测试一下当前 Kimi 配置”。
+- 允许通过对话补全配置，例如“把模型切到 MiMo”、“把模型切到 DeepSeek”或“测试一下当前 Kimi 配置”。
 - API key 等敏感信息只保存在后端安全存储中，不暴露给前端日志和模型上下文。
 
 可以支持：
@@ -755,8 +776,9 @@ camera snapshots
 
 - 实现 `BaseChatClient`。
 - 实现 `OpenAICompatibleClient`。
-- 支持 DeepSeek、Qwen、Kimi、GLM、SiliconFlow、OneAPI、New API 和自定义 endpoint。
+- 支持 Xiaomi MiMo、DeepSeek、Qwen、Kimi、GLM、SiliconFlow、OneAPI、New API 和自定义 endpoint。
 - 提供图形化 Provider 配置、模型切换和连接测试。
+- MiMo 作为重点 Provider preset，支持用量展示和体验账号友好的接入流程。
 - 错误信息脱敏并转成用户可读中文。
 
 ### M3 Agent 协议和安全层
@@ -808,6 +830,8 @@ camera snapshots
 - [ ] Config flow supports OpenAI-compatible provider
 - [ ] Provider setup works through UI without manual config file edits
 - [ ] Provider options flow supports model switching and connection test
+- [ ] Xiaomi MiMo preset available
+- [ ] MiMo usage display available when provider returns token usage
 - [ ] DeepSeek preset available
 - [ ] Qwen preset available
 - [ ] Kimi preset available

@@ -18,7 +18,7 @@ This file defines the rules that coding agents, contributors, and maintainers mu
 - Control Home Assistant devices through natural language.
 - Generate Home Assistant automations from Chinese descriptions.
 - Explain and diagnose existing automations.
-- Support domestic LLM providers such as DeepSeek, Qwen, Kimi, GLM, SiliconFlow, OneAPI, New API, and OpenAI-compatible gateways.
+- Support domestic LLM providers such as Xiaomi MiMo, DeepSeek, Qwen, Kimi, GLM, SiliconFlow, OneAPI, New API, and OpenAI-compatible gateways.
 - Improve recognition and control of Xiaomi / Mi Home / MIoT / Aqara / Yeelight / Roborock / Dreame devices.
 - Assist with Home Assistant configuration in a safe, reviewable, and reversible way.
 
@@ -40,7 +40,8 @@ HAclaw v1.0 must follow these principles:
 
 3. **OpenAI-compatible by default.**
    - Do not create a separate hardcoded client for every domestic provider if the provider supports OpenAI-compatible APIs.
-   - DeepSeek, Qwen, Kimi, GLM, SiliconFlow, OneAPI, New API, and self-hosted OpenAI-compatible gateways should reuse one `OpenAICompatibleClient`.
+   - Xiaomi MiMo, DeepSeek, Qwen, Kimi, GLM, SiliconFlow, OneAPI, New API, and self-hosted OpenAI-compatible gateways should reuse one `OpenAICompatibleClient`.
+   - Xiaomi MiMo is a first-class v1.0 provider preset because it strengthens HAclaw's Xiaomi smart-home positioning.
 
 4. **Home Assistant remains the source of truth.**
    - Do not connect directly to Xiaomi Cloud in v1.0 unless a user explicitly enables a future advanced feature.
@@ -73,6 +74,7 @@ HAclaw v1.0 must support:
   - Model name
   - Optional custom model
 - Domestic model presets:
+  - Xiaomi MiMo
   - DeepSeek
   - Qwen / DashScope OpenAI-compatible mode
   - Kimi / Moonshot
@@ -201,6 +203,7 @@ All OpenAI-compatible domestic providers must use one shared client.
 Do not create separate duplicated clients for:
 
 - DeepSeek
+- Xiaomi MiMo
 - Qwen
 - Kimi
 - GLM
@@ -253,6 +256,18 @@ Provider presets are convenience defaults only. Users must be allowed to overrid
 Suggested presets:
 
 ```text
+Xiaomi MiMo:
+  base_url: https://api.mimo-v2.com/v1 or user configured
+  model examples:
+    - mimo-v2-flash
+    - mimo-v2-pro
+    - mimo-v2-omni
+    - other MiMo models available in the user's console
+  notes:
+    - User-facing display names may use MiMo-V2-Flash style, but API model ids should follow the provider console.
+    - Treat model names, quotas, and exact endpoints as provider-console data.
+    - Show token usage when the API returns usage fields.
+
 DeepSeek:
   base_url: https://api.deepseek.com
   model examples:
@@ -297,6 +312,8 @@ OneAPI / New API:
 
 Do not assume model names are permanently stable. Model names must be user-editable.
 
+Xiaomi MiMo must not be hidden behind only the generic custom endpoint path. It should appear as a first-class provider option in the UI and conversation setup flow.
+
 ### 5.3 Error Handling
 
 Provider errors must be user-readable.
@@ -327,6 +344,8 @@ Required behavior:
 - A test-connection action must be available and must return redacted, user-readable errors.
 - Conversational commands may assist setup, for example changing provider, testing the current configuration, or explaining a failed connection.
 - Sensitive values must be stored and handled on the backend. The frontend may display only masked summaries.
+- Xiaomi MiMo setup must be available as a preset with API key, base URL, model, connection test, and token usage display when available.
+- The UI may mention MiMo trial or free quota as a good onboarding path, but must not hardcode a universal quota promise.
 
 Forbidden defaults:
 
@@ -1218,6 +1237,8 @@ Before tagging v1.0:
 - [ ] Provider setup is available through UI without manual config file edits.
 - [ ] Options flow or HAclaw settings page supports model switching.
 - [ ] Provider connection test shows redacted user-readable errors.
+- [ ] Xiaomi MiMo preset available.
+- [ ] MiMo token usage display available when the provider returns usage fields.
 - [ ] DeepSeek preset available.
 - [ ] Qwen preset available.
 - [ ] Kimi preset available.
