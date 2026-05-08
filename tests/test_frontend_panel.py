@@ -80,3 +80,27 @@ def test_clarification_card_contract_is_present():
     assert ".card {" in source
     assert ".cand-chips" in source
     assert ".cand-free-row" in source
+
+
+def test_automation_draft_card_contract_is_present():
+    source = PANEL_JS.read_text(encoding="utf-8")
+
+    assert 'if (payload?.type === "automation_draft")' in source
+    assert "_renderDraftCard(payload)" in source
+    assert "payload.missing_integrations" in source
+    assert "payload.rationale" in source
+    assert 'class="card draft"' in source
+    assert "btoa(unescape(encodeURIComponent(JSON.stringify(payload))))" in source
+    assert "_renderRationaleField" in source
+    assert 'this._mode === "automation"' in source
+    assert "btn-install-prompt" in source
+    assert '.btn-approve[data-card]' in source
+    assert "async _onApproveDraft(cardEl)" in source
+    assert '"create_automation_draft"' in source
+    assert '"approve_automation_draft"' in source
+    assert "confirmed: Boolean(payload.requires_confirmation)" in source
+    assert "[data-action='discard']" in source
+    assert "[data-action='edit']" in source
+    assert "_toast(text)" in source
+    assert ".card.draft .draft-head" in source
+    assert ".draft-actions" in source

@@ -208,6 +208,9 @@ class HAclawPanel extends HTMLElement {
     if (payload?.type === "final_response") {
       return this._renderFinalResponseBubble(payload);
     }
+    if (payload?.type === "automation_draft") {
+      return this._renderDraftCard(payload);
+    }
     if (payload?.type === "clarification") {
       return this._renderClarificationCard(payload);
     }
@@ -256,6 +259,150 @@ class HAclawPanel extends HTMLElement {
       <div class="cand-chips">${chipsHTML}</div>
       ${freeHTML}
     </div>`;
+  }
+
+  _renderDraftCard(payload) {
+    const cardId = `draft_${this._messages.length}`;
+    const requires = Boolean(payload.requires_confirmation);
+    const missing = Array.isArray(payload.missing_integrations)
+      ? payload.missing_integrations
+      : [];
+    const hasRationale = payload.rationale && typeof payload.rationale === "object";
+    const yaml = JSON.stringify(payload.automation || {}, null, 2);
+    const title = payload.title || payload.automation?.alias || "未命名草稿";
+    const risk = payload.risk_level || "low";
+    const approveLabel = requires ? "审批并确认风险" : "审批写入";
+    const cached = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+
+    const missingHTML = missing
+      .map(
+        (item) => `
+          <div class="warn-row">
+            ⚠️ 草稿用到 <code>${this._escape(item.service || "")}</code>,但 ${this._escape(item.integration_name || "")} 未检测到。
+            ${
+              item.install_link
+                ? this._html`<a href="${item.install_link}" target="_blank">官方指引</a>`
+                : ""
+            }
+            ${
+              item.install_prompt
+                ? this._html`<button class="btn-install-prompt" data-card="${cardId}" data-domain="${item.domain || ""}">📋 安装指令</button>`
+                : ""
+            }
+          </div>
+        `,
+      )
+      .join("");
+
+    const rationaleHTML = !hasRationale
+      ? `
+        <div class="warn-box small">⚠️ 模型未提供设计依据(rationale),无法审计这个草稿是怎么推演出来的;建议丢弃后再试一次。</div>
+      `
+      : `
+        <div class="rationale">
+          <div class="rationale-title">设计依据(从对话推演)</div>
+          <div class="rationale-row"><b>实体:</b> ${this._renderRationaleField(payload.rationale.entities)}</div>
+          <div class="rationale-row"><b>触发:</b> ${this._renderRationaleField(payload.rationale.trigger)}</div>
+          <div class="rationale-row"><b>条件:</b> ${this._renderRationaleField(payload.rationale.conditions)}</div>
+          <div class="rationale-row"><b>动作:</b> ${this._renderRationaleField(payload.rationale.actions)}</div>
+          <div class="rationale-row"><b>边缘情况:</b> ${this._renderRationaleField(payload.rationale.edge_cases)}</div>
+        </div>
+      `;
+
+    const approveDisabled = !hasRationale || missing.length > 0 ? "disabled" : "";
+    const approveTitle = approveDisabled ? "先解决警告(rationale 或缺集成)再审批" : "";
+    const inAutomationMode = this._mode === "automation";
+    const planHint = !inAutomationMode ? "(切到自动化模式后才能审批写入)" : "";
+
+    return `<div class="card draft" data-card-id="${this._escape(cardId)}" data-payload="${this._escape(cached)}">
+      <div class="draft-head">
+        <span class="draft-title">${this._escape(title)}</span>
+        <span class="draft-risk risk-${this._escape(risk)}">${this._escape(risk)}</span>
+      </div>
+      ${missing.length > 0 ? `<div class="warn-box">${missingHTML}</div>` : ""}
+      ${rationaleHTML}
+      <details class="draft-yaml"><summary>查看 YAML</summary><pre>${this._escape(yaml)}</pre></details>
+      <div class="draft-actions">
+        <button class="btn-primary btn-approve" data-card="${this._escape(cardId)}" ${approveDisabled} ${
+          approveTitle ? `title="${this._escape(approveTitle)}"` : ""
+        } ${!inAutomationMode ? "disabled" : ""}>
+          ${this._escape(approveLabel)} ${this._escape(planHint)}
+        </button>
+        <button class="btn-secondary" data-card="${this._escape(cardId)}" data-action="discard">丢弃</button>
+        <button class="btn-secondary" data-card="${this._escape(cardId)}" data-action="edit">修改后再说</button>
+      </div>
+    </div>`;
+  }
+
+  _renderRationaleField(value) {
+    if (Array.isArray(value)) {
+      return value.length === 0
+        ? '<span class="muted">无</span>'
+        : value.map((item) => this._escape(String(item))).join("、");
+    }
+    return this._escape(String(value ?? "无"));
+  }
+
+  async _onApproveDraft(cardEl) {
+    if (!cardEl) {
+      return;
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(decodeURIComponent(escape(atob(cardEl.dataset.payload))));
+    } catch (_err) {
+      this._toast("草稿数据无效");
+      return;
+    }
+
+    let draftId;
+    try {
+      const created = await this._callService("create_automation_draft", {
+        title: payload.title || payload.automation?.alias || "草稿",
+        description: payload.description || "",
+        automation: payload.automation,
+        source: "panel",
+      });
+      if (!created?.success) {
+        this._toast(created?.message || "创建草稿失败");
+        return;
+      }
+      draftId = created.draft.id;
+    } catch (err) {
+      this._toast(err?.message || "创建草稿失败");
+      return;
+    }
+
+    try {
+      const approved = await this._callService("approve_automation_draft", {
+        draft_id: draftId,
+        confirmed: Boolean(payload.requires_confirmation),
+      });
+      if (!approved?.success) {
+        this._toast(approved?.message || "审批失败");
+        return;
+      }
+      this._toast(approved.message || "已写入");
+      const actions = cardEl.querySelector(".draft-actions");
+      if (actions) {
+        actions.innerHTML = '<span class="muted">已审批写入</span>';
+      }
+    } catch (err) {
+      this._toast(err?.message || "审批失败");
+    }
+  }
+
+  _toast(text) {
+    const toast = document.createElement("div");
+    toast.className = "toast";
+    toast.textContent = text;
+    this.appendChild(toast);
+    setTimeout(() => toast.remove(), 2500);
+  }
+
+  _openInstallModal(domain) {
+    this._toast(`安装指令将在环境检查卡片中打开: ${domain || "未知集成"}`);
   }
 
   _render() {
@@ -364,6 +511,33 @@ class HAclawPanel extends HTMLElement {
           this.querySelector(`.cand-free-send[data-card="${el.dataset.card}"]`)?.click();
         }
       });
+    });
+    this.querySelectorAll(".btn-approve[data-card]").forEach((el) => {
+      el.addEventListener("click", () => this._onApproveDraft(el.closest(".card.draft")));
+    });
+    this.querySelectorAll(".card.draft [data-action='discard']").forEach((el) => {
+      el.addEventListener("click", () => {
+        const card = el.closest(".card.draft");
+        card?.classList.add("discarded");
+        const actions = card?.querySelector(".draft-actions");
+        if (actions) {
+          actions.innerHTML = '<span class="muted">已丢弃</span>';
+        }
+      });
+    });
+    this.querySelectorAll(".card.draft [data-action='edit']").forEach((el) => {
+      el.addEventListener("click", () => {
+        const card = el.closest(".card.draft");
+        const yaml = card?.querySelector(".draft-yaml pre")?.textContent || "";
+        const input = this.querySelector("#chat-input");
+        if (input) {
+          input.value = yaml;
+          input.focus();
+        }
+      });
+    });
+    this.querySelectorAll(".btn-install-prompt[data-domain]").forEach((el) => {
+      el.addEventListener("click", () => this._openInstallModal(el.dataset.domain));
     });
     this.querySelector("#send-btn")?.addEventListener("click", () => this._onSend());
     this.querySelector("#chat-input")?.addEventListener("keydown", (event) => {
@@ -631,6 +805,166 @@ class HAclawPanel extends HTMLElement {
         cursor: pointer;
         min-height: 40px;
         padding: 10px 16px;
+      }
+
+      .card.draft .draft-head {
+        align-items: center;
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+
+      .card.draft .draft-title {
+        font-weight: 700;
+      }
+
+      .draft-risk {
+        border-radius: 10px;
+        font-size: 11px;
+        padding: 2px 8px;
+        text-transform: uppercase;
+      }
+
+      .risk-low {
+        background: rgba(27, 143, 77, 0.15);
+        color: #1b8f4d;
+      }
+
+      .risk-medium {
+        background: rgba(255, 193, 7, 0.15);
+        color: #b88d00;
+      }
+
+      .risk-high,
+      .risk-critical {
+        background: rgba(219, 68, 55, 0.15);
+        color: #db4437;
+      }
+
+      .warn-box {
+        background: rgba(255, 193, 7, 0.1);
+        border: 1px solid #b88d00;
+        border-radius: 8px;
+        font-size: 13px;
+        margin: 8px 0;
+        padding: 8px 12px;
+      }
+
+      .warn-box.small {
+        font-size: 12px;
+      }
+
+      .warn-row {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 4px 0;
+      }
+
+      .warn-row code {
+        background: rgba(0, 0, 0, 0.05);
+        border-radius: 4px;
+        padding: 1px 4px;
+      }
+
+      .btn-install-prompt {
+        background: var(--primary-color);
+        border: 0;
+        border-radius: 6px;
+        color: var(--text-primary-color);
+        cursor: pointer;
+        font-size: 12px;
+        padding: 4px 10px;
+      }
+
+      .rationale {
+        background: rgba(0, 0, 0, 0.04);
+        border-radius: 8px;
+        font-size: 13px;
+        margin: 8px 0;
+        padding: 8px 12px;
+      }
+
+      .rationale-title {
+        font-weight: 700;
+        margin-bottom: 6px;
+      }
+
+      .rationale-row {
+        margin: 2px 0;
+      }
+
+      .rationale-row .muted {
+        color: var(--secondary-text-color);
+      }
+
+      .draft-yaml {
+        margin: 8px 0;
+      }
+
+      .draft-yaml pre {
+        background: rgba(0, 0, 0, 0.05);
+        border-radius: 6px;
+        font-family: ui-monospace, monospace;
+        font-size: 12px;
+        max-height: 240px;
+        overflow: auto;
+        padding: 8px;
+      }
+
+      .draft-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 8px;
+      }
+
+      .btn-primary {
+        background: var(--primary-color);
+        border: 0;
+        border-radius: 6px;
+        color: var(--text-primary-color);
+        cursor: pointer;
+        min-height: 40px;
+        padding: 8px 14px;
+      }
+
+      .btn-primary:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+      }
+
+      .btn-secondary {
+        background: transparent;
+        border: 1px solid var(--divider-color);
+        border-radius: 6px;
+        color: var(--primary-text-color);
+        cursor: pointer;
+        min-height: 40px;
+        padding: 8px 14px;
+      }
+
+      .toast {
+        background: rgba(0, 0, 0, 0.85);
+        border-radius: 8px;
+        bottom: 80px;
+        color: white;
+        font-size: 13px;
+        left: 50%;
+        max-width: 80%;
+        padding: 10px 16px;
+        position: fixed;
+        transform: translateX(-50%);
+        z-index: 1000;
+      }
+
+      .discarded {
+        opacity: 0.5;
+      }
+
+      .muted {
+        color: var(--secondary-text-color);
       }
 
       @media (max-width: 640px) {
