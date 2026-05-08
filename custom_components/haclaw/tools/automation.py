@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from custom_components.haclaw.agent.safety import evaluate_service_call
+from .environment import INTEGRATION_METADATA
 
 
 RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
@@ -37,6 +38,7 @@ class AutomationValidationResult:
     requires_confirmation: bool = False
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    missing_integrations: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def valid(self) -> bool:
@@ -107,6 +109,24 @@ def validate_automation_draft(
         elif decision.requires_confirmation:
             warnings.append(f"{service_call.key} requires explicit confirmation.")
 
+    missing_integrations: list[dict[str, Any]] = []
+    if service_exists is not None:
+        seen_domains: set[str] = set()
+        for sc in service_calls:
+            if sc.domain in seen_domains:
+                continue
+            seen_domains.add(sc.domain)
+            if service_exists(sc.domain, sc.service):
+                continue
+            meta = INTEGRATION_METADATA.get(sc.domain, {})
+            missing_integrations.append({
+                "domain": sc.domain,
+                "service": sc.key,
+                "integration_name": meta.get("integration_name", sc.domain),
+                "install_link": meta.get("install_link"),
+                "reason": f"草稿用到了 {sc.key} 服务但未检测到这个集成",
+            })
+
     return AutomationValidationResult(
         automation=normalized,
         entity_ids=entity_ids,
@@ -115,6 +135,7 @@ def validate_automation_draft(
         requires_confirmation=requires_confirmation,
         errors=errors,
         warnings=warnings,
+        missing_integrations=missing_integrations,
     )
 
 

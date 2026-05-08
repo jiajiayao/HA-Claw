@@ -109,5 +109,58 @@ class AutomationDraftTests(unittest.TestCase):
         self.assertEqual(extract_service_calls(automation)[0].key, "light.turn_on")
 
 
+def test_validate_reports_missing_integration_for_xiaomi_miot() -> None:
+    automation = {
+        "alias": "test xiaomi miot",
+        "trigger": [{"platform": "time", "at": "19:00"}],
+        "action": [
+            {"service": "xiaomi_miot.set_property",
+             "target": {"entity_id": "fan.purifier"}}
+        ],
+    }
+    result = validate_automation_draft(
+        automation,
+        known_entity_ids={"fan.purifier"},
+        service_exists=lambda dom, svc: False,
+        existing_aliases=set(),
+    )
+    miss = [m for m in result.missing_integrations if m["domain"] == "xiaomi_miot"]
+    assert len(miss) == 1
+    assert miss[0]["integration_name"] == "Xiaomi Miot Auto"
+    assert miss[0]["install_link"].startswith("http")
+
+
+def test_validate_unknown_domain_falls_back() -> None:
+    automation = {
+        "alias": "weird",
+        "trigger": [{"platform": "time", "at": "19:00"}],
+        "action": [{"service": "frobozz.bar", "target": {}}],
+    }
+    result = validate_automation_draft(
+        automation,
+        known_entity_ids=set(),
+        service_exists=lambda dom, svc: False,
+        existing_aliases=set(),
+    )
+    miss = next(m for m in result.missing_integrations if m["domain"] == "frobozz")
+    assert miss["integration_name"] == "frobozz"
+    assert miss["install_link"] is None
+
+
+def test_validate_no_missing_when_all_services_exist() -> None:
+    automation = {
+        "alias": "all good",
+        "trigger": [{"platform": "time", "at": "19:00"}],
+        "action": [{"service": "light.turn_on", "target": {"entity_id": "light.x"}}],
+    }
+    result = validate_automation_draft(
+        automation,
+        known_entity_ids={"light.x"},
+        service_exists=lambda dom, svc: True,
+        existing_aliases=set(),
+    )
+    assert result.missing_integrations == []
+
+
 if __name__ == "__main__":
     unittest.main()
