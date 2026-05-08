@@ -16,6 +16,7 @@ from custom_components.haclaw.const import (
     SERVICE_APPROVE_AUTOMATION_DRAFT,
     SERVICE_BIND_PRESENCE_ENTITY,
     SERVICE_CREATE_AUTOMATION_DRAFT,
+    SERVICE_GET_ENVIRONMENT_READINESS,
     SERVICE_GET_PRESENCE_BINDING,
     SERVICE_LIST_PRESENCE_CANDIDATES,
     SERVICE_TEST_CONNECTION,
@@ -67,19 +68,41 @@ class FakeServices:
         self.registered.pop((domain, service), None)
 
 
+class FakeConfigEntries:
+    def __init__(self, entries_by_domain=None):
+        self._by_domain: dict[str, list] = {
+            domain: list(entries) for domain, entries in (entries_by_domain or {}).items()
+        }
+        self.update_calls: list[tuple] = []
+
+    def async_entries(self, domain):
+        return list(self._by_domain.get(domain, []))
+
+    def async_update_entry(self, entry, *, options=None, data=None):
+        self.update_calls.append((entry, options, data))
+        if options is not None:
+            entry.options = dict(options)
+        if data is not None:
+            entry.data = dict(data)
+
+
 class FakeHass:
-    def __init__(self, root, entity_ids=(), services=()):
+    def __init__(
+        self, root, entity_ids=(), services=(),
+        config_entries=None, entry=None,
+    ):
         self.config = FakeConfig(root)
         self.data = {
             DOMAIN: {
                 "entries": {
                     "entry-1": {
+                        "entry": entry,
                         "provider": {
                             CONF_PROVIDER_PRESET: "xiaomi_mimo",
                             CONF_API_KEY: "sk-test-secret",
                             CONF_BASE_URL: "https://api.mimo-v2.com/v1",
                             CONF_MODEL: "mimo-v2-flash",
-                        }
+                        },
                     }
                 },
                 "services_registered": False,
@@ -89,6 +112,7 @@ class FakeHass:
         }
         self.states = FakeStates(entity_ids)
         self.services = FakeServices(services)
+        self.config_entries = FakeConfigEntries(config_entries)
 
     async def async_add_executor_job(self, func, *args):
         return func(*args)
@@ -192,6 +216,27 @@ class IntegrationServiceTests(unittest.IsolatedAsyncioTestCase):
             ids = [c["id"] for c in response["candidates"]]
             self.assertEqual(ids[0], "person.jiajia")
             self.assertEqual(ids[1], "device_tracker.phone")
+
+    def test_registers_get_environment_readiness_service(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            hass = FakeHass(tmp_dir)
+            haclaw._async_register_services(hass)
+            self.assertIn(
+                (DOMAIN, SERVICE_GET_ENVIRONMENT_READINESS),
+                hass.services.registered,
+            )
+
+    async def test_get_environment_readiness_returns_three_required(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            hass = FakeHass(tmp_dir)
+            call = ServiceCall(
+                hass, DOMAIN, SERVICE_GET_ENVIRONMENT_READINESS, {},
+            )
+            response = await haclaw._async_handle_get_environment_readiness(call)
+            ids = [item["id"] for item in response["items"]]
+            self.assertEqual(ids, ["provider", "device_tracker", "xiaomi_miot"])
+            advanced_ids = [item["id"] for item in response["advanced"]]
+            self.assertIn("hacs", advanced_ids)
 
     async def test_test_connection_returns_usage_without_secret(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

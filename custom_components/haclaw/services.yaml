@@ -76,3 +76,8 @@ bind_presence_entity:
       required: true
       selector:
         text:
+
+get_environment_readiness:
+  name: Get environment readiness
+  description: Detect HACS / Xiaomi / device_tracker readiness for HAclaw onboarding.
+  fields: {}

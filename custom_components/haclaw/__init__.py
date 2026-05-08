@@ -32,10 +32,12 @@ from .const import (
     SERVICE_APPROVE_AUTOMATION_DRAFT,
     SERVICE_BIND_PRESENCE_ENTITY,
     SERVICE_CREATE_AUTOMATION_DRAFT,
+    SERVICE_GET_ENVIRONMENT_READINESS,
     SERVICE_GET_PRESENCE_BINDING,
     SERVICE_LIST_PRESENCE_CANDIDATES,
     SERVICE_TEST_CONNECTION,
     STORAGE_DIR,
+    UI_STATE_FILE,
 )
 from .providers.openai_compatible import OpenAICompatibleClient, ProviderError
 from .storage.audit_log import append_audit_event
@@ -55,7 +57,9 @@ from .storage.presence import (
     load_binding,
     save_binding,
 )
+from .storage.ui_state import load_state
 from .tools.automation import validate_automation_draft
+from .tools.environment import detect_environment_readiness
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -87,6 +91,7 @@ APPROVE_AUTOMATION_DRAFT_SCHEMA = vol.Schema(
 LIST_PRESENCE_CANDIDATES_SCHEMA = vol.Schema({})
 GET_PRESENCE_BINDING_SCHEMA = vol.Schema({})
 BIND_PRESENCE_ENTITY_SCHEMA = vol.Schema({vol.Required("entity_id"): cv.string})
+GET_ENVIRONMENT_READINESS_SCHEMA = vol.Schema({})
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -185,6 +190,13 @@ def _async_register_services(hass: HomeAssistant) -> None:
         schema=BIND_PRESENCE_ENTITY_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
     )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_ENVIRONMENT_READINESS,
+        _async_handle_get_environment_readiness,
+        schema=GET_ENVIRONMENT_READINESS_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
     domain_data["services_registered"] = True
 
 
@@ -200,6 +212,7 @@ def _async_remove_services(hass: HomeAssistant) -> None:
         SERVICE_LIST_PRESENCE_CANDIDATES,
         SERVICE_GET_PRESENCE_BINDING,
         SERVICE_BIND_PRESENCE_ENTITY,
+        SERVICE_GET_ENVIRONMENT_READINESS,
     ):
         hass.services.async_remove(DOMAIN, service)
     domain_data["services_registered"] = False
@@ -453,6 +466,29 @@ async def _async_handle_bind_presence_entity(call: ServiceCall) -> dict[str, Any
         },
     )
     return {"success": True, "me_person_entity_id": entity_id}
+
+
+async def _async_handle_get_environment_readiness(call: ServiceCall) -> dict[str, Any]:
+    hass = call.hass
+    ui_state = await hass.async_add_executor_job(
+        load_state, _storage_path(hass, UI_STATE_FILE),
+    )
+
+    provider_ok = False
+    try:
+        provider = _get_provider_config(hass)
+        if provider.get(CONF_API_KEY) and provider.get(CONF_BASE_URL):
+            provider_ok = True
+    except HomeAssistantError:
+        provider_ok = False
+
+    return await hass.async_add_executor_job(
+        lambda: detect_environment_readiness(
+            hass,
+            dismissed=ui_state.get("env_check_dismissed", False),
+            provider_ok=provider_ok,
+        )
+    )
 
 
 def _get_provider_config(
