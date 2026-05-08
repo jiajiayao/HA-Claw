@@ -61,6 +61,40 @@
 - README §"Dashboard 生成"
 - 类似自动化草稿,前端预览 + 手动安装说明
 
+### 2.8 历史行为模式识别 → 自动化推荐(对应 chat ui spec §17 延后项)
+
+**触发**:用户切到 ⚡ 自动化模式,如果 `ui_state.json` 中 `last_recommendation_at` 距今 > 24h,前端拉一次推荐 service。
+
+**识别规则雏形(以下都是 v1.x 设计起点,非最终)**:
+
+- 扫 `recorder.history`(HA 自带数据库),按实体取过去 ≥ 14 天的状态变化
+- 按域过滤:目前只看 `light.*`、`switch.*`、`fan.*`、`climate.*`、`vacuum.*`(高频用户操作 + 低风险)
+- 时间聚合:把每个实体的 on/off 切换按"小时桶 + 星期几"聚合,统计落桶频率
+- 模式判定:
+  - **每日重复**:连续 ≥ 7 天在同一小时 ± 30min 出现相同状态切换 → 推 `time_pattern` 自动化
+  - **存在感应触发**:绑定的存在实体 state 变化后 ≤ 5 分钟,某实体被切换 → 推 `state_trigger` 自动化(关联存在感应)
+- 推荐数量上限:每 24h 最多展示 3 条,避免轰炸
+- 排除已有自动化覆盖的实体(扫 `automations.yaml` 和 `/config/haclaw/automations.yaml`)
+
+**前端展示**:
+
+- 自动化模式打开时,如果有推荐,在对话顶部插入"🎯 给你的自动化建议"折叠卡
+- 用户可"采用"(转成 automation_draft 走审批流)、"忽略"(写 ignore list 不再推)、"全部不要了"(关闭整个推荐功能)
+
+**安全/隐私**:
+
+- recorder.history 数据只在本机分析,不发给 LLM
+- 推荐生成不消耗 provider 配额 — 是纯算法,不是 LLM 推理
+- 用户可在设置 modal 里关闭整个推荐功能 → 写 `ui_state.json` 的 `recommendation_disabled: true`
+- 推荐结果不写完整数据到审计日志,只记 `recommendation_shown` / `recommendation_accepted` / `recommendation_dismissed` 事件类型
+
+**为何不在 B 阶段做**:
+
+- recorder.history 读取需要异步 + 结果可能很大,不能阻塞 chat
+- 模式识别算法需要真实数据调参(频率阈值、时间桶大小、置信度门槛)
+- "我注意到你 X" 这种主动推荐如果太频繁会反感,需要灰度 + 反馈循环
+- B 阶段还没办法"采用"(C 阶段才有真执行 / 完整审批闭环)— 推荐了用户也用不了多少
+
 ## 3. 实现先后建议(待详细设计时再排)
 
 ```
@@ -80,6 +114,8 @@
   ⑦ 多会话管理
    ↓
   ⑧ Dashboard 草稿
+   ↓
+  ⑨ 历史行为模式识别 → 自动化推荐(§2.8)
 ```
 
 ## 4. 对范围 B 的兼容承诺

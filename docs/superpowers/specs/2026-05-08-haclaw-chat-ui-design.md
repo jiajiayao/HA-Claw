@@ -21,6 +21,7 @@
 - 重做面板为对话优先(chat-first)的 UI,布局参考 Claude Desktop Lite 风格
 - 引入最小后端对话服务 `haclaw/chat`(WebSocket 命令),按 README JSON 协议解析模型回复
 - 在对话流里以 inline 卡片渲染:文字回复 / 候选实体澄清 / 自动化草稿预览 / 风险确认 / `tool_call` 轻提示
+- **三种聊天模式**:计划 / 自动化 / 执行 — 模式同时约束 system prompt 和前端可见操作;模式记忆持久化(默认首次为"自动化")
 - 首次环境就绪检查器(inline 卡片,3 项必检 + 跳过逻辑)
 - 自动化草稿生成时,后端探测缺失集成,在草稿卡片里展示警告
 - 用户存在实体绑定向导(inline 卡片,基于已有 HA 实体)
@@ -29,13 +30,14 @@
 
 ### 2.2 非目标(本 spec 不做,延后到 C 或更后)
 
-- **真正执行模型提议的工具调用**(如 `turn_on_light`):本期 `tool_call` 仅以"灰色一行"显示,不执行
+- **真正执行模型提议的工具调用**(如 `turn_on_light`):本期 `tool_call` 仅以"灰色一行"显示,不执行;**执行模式 B 阶段也不真执行**,仅以"⚠️ 实验中"标签 + 一次性弹窗说明占位
 - **完整 Agent 多轮迭代循环**(`max_iterations`):本期一来一回,模型一次回复直接结束
 - **完整安全层 / 服务白名单 / 风险等级计算**:本期 `risk_confirmation` 类型仅在前端渲染卡片,确认按钮先不真正执行(因为没有工具执行层)
 - **完整审计日志查询页**:本期审计日志仍由现有 `append_audit_event` 写入,前端不展示
 - **流式响应**:本期等模型完整回复后再渲染(JSON 协议下流式收益不大)
 - **多会话切换功能**:本期是单一会话 + 历史抽屉(只读列表,可清空整条对话)。完整的多会话 / 重命名 / 编辑留给后续
 - **Provider API key 等敏感配置 UI**:本期仍走 HA config flow / options flow,Panel 内只做模型切换和环境检查
+- **历史行为模式识别 / 自动化推荐**:扫 recorder.history 找用户行为周期性模式 → 自动推送自动化建议;延后到 follow-up spec
 
 ## 3. 安全边界(再次声明)
 
@@ -116,7 +118,60 @@ flowchart LR
 - chip 圆角药丸,点击 = 立即作为用户消息发送
 - 一旦有消息进入对话流,问候和 chip 消失,被消息流替代;新对话(清空)后再次出现
 
+### 5.4 模式选择器
+
+放置在**输入框上方一行**,跟"这条消息要做什么"强相关:
+
+```
+├──────────────────────────────────────────────────────┤
+│ 模式: [📋 计划] [⚡ 自动化] [🛠 执行 ⚠️实验]         │  <- 5.4
+├──────────────────────────────────────────────────────┤
+│  [ 输入消息...                              ] 发送 │
+└──────────────────────────────────────────────────────┘
+```
+
+#### 5.4.1 三种模式
+
+| 模式 | 含义 | 模型 prompt 约束 | 前端可见操作 |
+|------|------|-----------------|-------------|
+| 📋 **计划** | 只 chat,不就行操作 — 用来想清楚需求 | system prompt 末尾追加"当前模式:计划。只允许返回 `final_response` 或 `clarification`。即使用户要求生成自动化,也要返回 `final_response` 描述你建议的自动化思路,但**不要**返回 `automation_draft`" | 即使模型违规返回了 `automation_draft`,卡片也以**只读**展示且**审批按钮全禁用**(置灰),并附"切到自动化模式后才能审批写入"提示 |
+| ⚡ **自动化** | 设计自动化(默认模式) | system prompt 末尾追加"当前模式:自动化。鼓励返回 `automation_draft` 推进用户想做的自动化;允许 `clarification` 和 `final_response`;**不要返回 `tool_call`**(本期没工具执行)" | `automation_draft` 卡片审批按钮启用,走现有 `approve_automation_draft` 服务 |
+| 🛠 **执行** | 控制设备 — **B 阶段为实验占位** | system prompt 末尾追加"当前模式:执行。允许返回 `tool_call` 提议设备控制;允许其他全部协议类型" | 输入框旁红色 `⚠️ 实验中` 标签;模式切换瞬间弹一次性 dialog "工具执行层 v1.x 启用,本模式现在仅展示模型会怎么提议工具调用,不会真正控制设备";`tool_call` 灰行渲染保持(同非执行模式),不真路由到任何 service |
+
+#### 5.4.2 切换行为
+
+- 切换瞬间:更新前端状态 + 写 `ui_state.json` 的 `last_mode`(schema 详见 §11.4)
+- 切换不清空当前对话(模型上下文里包含历史,模式切换只影响**下一次** prompt 拼接)
+- 切到执行模式且 `ui_state.json` 中 `execute_mode_warning_seen` 为 `false` → 弹一次性确认 dialog,确认后写 `execute_mode_warning_seen: true`
+- 切换不创建新会话 — 整个 panel 沿用单会话设计(参见 §2.2 非目标里的"多会话切换功能")
+
+#### 5.4.3 默认值规则
+
+- 优先读 `ui_state.json` 的 `last_mode`
+- 如不存在或非合法值(`plan` / `automation` / `execute` 之一),默认 `automation`
+- 这是为了让 v1.0 用户首次打开就能体会到 HAclaw 的核心价值(自动化生成)
+
+#### 5.4.4 模式 vs 模式选择器的关系
+
+- 模式是状态 + 行为约束;选择器只是 UI 触发器
+- 切换前端 chip 即等同于改变下一次 `haclaw/chat` 调用时附带的 `mode` 字段(详见 §7.1)
+- 模式状态对前端组件渲染**也**有影响,详见 §6.1
+
 ## 6. 消息组件清单
+
+### 6.1 按模式的渲染/交互差异
+
+模式不影响消息**是否渲染**(任何类型都按 JSON `type` 渲染),但影响**交互按钮**:
+
+| 模式 | `automation_draft` 卡片审批按钮 | `risk_confirmation` 卡片确认按钮 | `tool_call` 灰行 |
+|------|-------------------------------|--------------------------------|----------------|
+| 计划 | **禁用**,提示"切到自动化模式后才能审批写入" | 禁用 + B 阶段统一提示 | 渲染但加注"计划模式下模型不应返回此类型,这是异常输出" |
+| 自动化 | **启用**,走 `approve_automation_draft` | 禁用 + "工具执行层未上线" | 渲染但加注"自动化模式下不应出现 tool_call,异常输出" |
+| 执行 | 启用 | 禁用 + "工具执行层未上线"(B 阶段执行模式仍不真执行) | 正常灰行渲染,无异常注 |
+
+> 即使后端协议过滤(§7.5)已经按模式拒绝越界类型,前端仍要做兜底渲染处理 — 防御式 UI,模型偶尔违规时不至于白屏。
+
+### 6.2 消息组件总表
 
 每种类型一个独立组件,按 JSON `type` 字段分发渲染:
 
@@ -143,9 +198,12 @@ flowchart LR
   "id": 42,
   "type": "haclaw/chat",
   "conversation_id": "conv_2026_05_08_abc",
-  "user_message": "打开客厅灯"
+  "user_message": "打开客厅灯",
+  "mode": "automation"
 }
 ```
+
+`mode` 必须是 `plan` / `automation` / `execute` 之一;非法值后端拒绝并返回错误。
 
 返回(单次响应,本期非流式):
 
@@ -183,13 +241,15 @@ flowchart LR
 
 ### 7.3 System Prompt(中文优先骨架)
 
-最小骨架,放在 `agent/prompts.py` 新文件:
+分为**基础 prompt**(所有模式共享)和**模式 prompt 后缀**(按 `mode` 字段拼接)。基础 prompt 放在 `agent/prompts.py` 的 `BASE_SYSTEM_PROMPT`;模式后缀放在 `MODE_SUFFIX_PLAN` / `MODE_SUFFIX_AUTOMATION` / `MODE_SUFFIX_EXECUTE`。最终发给模型的 system 消息 = `BASE_SYSTEM_PROMPT + "\n\n" + MODE_SUFFIX_<mode>`。
+
+#### 7.3.1 基础 prompt
 
 ```
 你是 HAclaw,Home Assistant 的中文 AI 助手。
 严格遵守:
 - 只输出合法 JSON,不要在 JSON 外混入 Markdown 或解释文字
-- 协议类型: final_response / clarification / automation_draft / risk_confirmation / tool_call
+- 协议类型白名单(具体允许哪些由当前模式决定): final_response / clarification / automation_draft / risk_confirmation / tool_call
 - 用中文回复
 - 不要编造实体 ID
 - 高风险操作(开锁、撤防、重启 HA、shell)必须用 risk_confirmation 类型
@@ -203,12 +263,60 @@ flowchart LR
 - 如果"绑定的存在实体"为"未绑定",并且用户的请求涉及到家/离家/在家时/不在家时类自动化,请返回 final_response 类型,且 message 字段必须包含字符串 "[BIND_PRESENCE]"(放在中文说明的开头);前端会据此插入绑定向导卡片。其他场景下严禁使用此 marker。
 ```
 
+#### 7.3.2 模式后缀
+
+```
+# MODE_SUFFIX_PLAN
+当前模式:📋 计划模式。
+- 你**只能**返回 final_response 或 clarification 两种类型
+- 即使用户要求"生成自动化",也只用 final_response 描述你建议的自动化思路、可能的实体、可能的 trigger,不要返回 automation_draft
+- 即使用户要求"打开/关闭设备",也只用 final_response 描述你的理解和建议步骤,不要返回 tool_call
+- 这是用户用来想清楚需求的模式,不要执行任何动作
+```
+
+```
+# MODE_SUFFIX_AUTOMATION
+当前模式:⚡ 自动化模式。
+- 优先返回 automation_draft 推进用户想做的自动化
+- 允许 final_response(解释/澄清)和 clarification(实体多义)
+- **不要返回 tool_call** — 本期没有工具执行能力,模型提议工具调用对用户无价值
+- 生成草稿前要确保实体 ID、服务名都是真实存在的;不确定时先用 clarification 问用户
+```
+
+```
+# MODE_SUFFIX_EXECUTE
+当前模式:🛠 执行模式(实验中)。
+- 允许返回 tool_call 提议设备控制 — 但用户已经被告知工具执行层 v1.x 才上线,本期 tool_call 只展示不执行
+- 高风险操作(开锁、撤防、重启 HA、shell_command.*、xiaomi_miot.get_token)依然必须用 risk_confirmation 类型
+- 允许其他全部协议类型
+- tool_call 的 args 字段要给出完整、可执行的实体 ID 和参数,即使本期不执行
+```
+
 详细 prompt 调优(尤其小米生态识别、`tool_call` 工具列表)留给 C 范围。
 
 ### 7.4 上下文长度控制
 
 - 历史消息进 prompt 时,从最新往前累加,达到 `max_history_chars = 8000` 即截断,超出部分丢弃
 - 不做 token 精确计算,字数估算够用;真正的 token 限流由 provider 报错回流
+
+### 7.5 按模式的后端协议过滤
+
+**模型即使违反 prompt 指令返回了越界类型,后端也要拦截**(防御深度):
+
+```python
+ALLOWED_TYPES_BY_MODE = {
+    "plan": {"final_response", "clarification"},
+    "automation": {"final_response", "clarification", "automation_draft"},
+    "execute": {"final_response", "clarification", "automation_draft",
+                "risk_confirmation", "tool_call"},
+}
+```
+
+处理:
+
+- 若 `assistant_message["type"]` 不在当前模式允许集合中 → 视同协议失败,走 §7.2 步骤 5 的 system message 重试一次
+- 重试仍越界 → 返回 `error` 给前端,审计日志写 `result: "mode_violation"`,**不写入 conversations.json 的 assistant 部分**
+- 这样保证模式约束既来自 prompt(模型可读),也来自代码(模型不可绕过)
 
 ## 8. 首次环境就绪检查
 
@@ -408,6 +516,27 @@ bind_presence_entity:
 - "清空全部历史" → conversations 数组置 `[]`
 - 不删 audit log(审计独立保留)
 
+### 11.4 UI 状态文件 `ui_state.json`
+
+`/config/haclaw/ui_state.json`:
+
+```json
+{
+  "env_check_dismissed": false,
+  "execute_mode_warning_seen": false,
+  "last_mode": "automation",
+  "last_conversation_id": "conv_2026_05_08_abc"
+}
+```
+
+读写规则:
+
+- `env_check_dismissed`:用户在环境就绪卡里点"全部跳过"后置 `true`(§8.3)
+- `execute_mode_warning_seen`:用户首次切到执行模式并确认 dialog 后置 `true`(§5.4.2)
+- `last_mode`:每次模式切换写入,值必须是 `plan` / `automation` / `execute` 之一;非法值或缺失时前端默认为 `automation`(§5.4.3)
+- `last_conversation_id`:打开 panel 时优先用这个 id 续聊,不存在则新建
+- 文件读写都通过 `storage/ui_state.py` 集中处理,不允许各组件直接 read/write
+
 ## 12. 自动化草稿增强:`missing_integrations`
 
 `tools/automation.py` 的 `validate_automation_draft` 函数返回结构新增字段:
@@ -453,18 +582,19 @@ class ValidationResult:
 新增:
 
 - `custom_components/haclaw/agent/__init__.py`(包标识)
-- `custom_components/haclaw/agent/prompts.py` — System prompt 骨架(含 BIND_PRESENCE 指令)
-- `custom_components/haclaw/agent/protocol.py` — JSON 响应解析 + 协议白名单校验
-- `custom_components/haclaw/agent/chat_session.py` — 单轮对话编排,接现有 `OpenAICompatibleClient`
+- `custom_components/haclaw/agent/prompts.py` — `BASE_SYSTEM_PROMPT` + `MODE_SUFFIX_*`(三种模式后缀,见 §7.3) + BIND_PRESENCE marker 指令
+- `custom_components/haclaw/agent/protocol.py` — JSON 响应解析 + 协议白名单校验 + **按模式过滤 `ALLOWED_TYPES_BY_MODE`**(见 §7.5)
+- `custom_components/haclaw/agent/chat_session.py` — 单轮对话编排,接现有 `OpenAICompatibleClient`,负责按 mode 拼接 prompt 后缀
 - `custom_components/haclaw/storage/conversations.py` — `conversations.json` 读写 + 滚动淘汰
 - `custom_components/haclaw/storage/presence.py` — `presence.json` 读写 + entity_id 校验
 - `custom_components/haclaw/storage/ui_state.py` — `ui_state.json`(env_check_dismissed 等)
 - `custom_components/haclaw/tools/environment.py` — 三项环境检测 + domain → integration_name/link 映射常量
-- `tests/test_protocol.py` — 5 种协议类型 + 非法 JSON
-- `tests/test_chat_session.py` — 正常对话、协议失败重试、上下文截断
+- `tests/test_protocol.py` — 5 种协议类型 + 非法 JSON + `ALLOWED_TYPES_BY_MODE` 三种模式各自的拒绝集合
+- `tests/test_chat_session.py` — 正常对话、协议失败重试、上下文截断、模式后缀拼接断言
 - `tests/test_environment.py` — 三项检测的 ok/缺失分支
 - `tests/test_presence.py` — list/get/bind 三服务,含错误 entity_id 拒绝
 - `tests/test_conversations_storage.py` — 滚动淘汰、单会话上限、超大文件清理
+- `tests/test_ui_state.py` — `ui_state.json` 读写、`last_mode` 非法值容错、`execute_mode_warning_seen` 持久化
 
 修改:
 
@@ -482,12 +612,16 @@ class ValidationResult:
 
 - [ ] 打开 HAclaw 面板,看到顶部状态条 + 中央问候 + 6 个建议 chip
 - [ ] 状态条显示当前模型名 + 连通状态(绿/红)
+- [ ] 输入框上方有模式选择器(3 个 chip),首次默认为 ⚡ 自动化
 - [ ] 首次进入,环境检查卡片自动出现在对话顶部;3 项检查正确显示;链接可点击
 - [ ] 点"全部跳过"后,刷新页面卡片不再自动弹,但顶部出现 ⚠️ 小红点
 - [ ] 输入"打开客厅灯"发送,看到"思考中..."然后变成模型回复气泡
 - [ ] 模型如果返回 `clarification`,看到候选 chip 卡;点 chip 自动作为下一条消息发送
-- [ ] 模型如果返回 `automation_draft`,看到折叠卡;展开能看到 YAML;`审批写入` 按钮调用现有 `approve_automation_draft`
+- [ ] 模型如果返回 `automation_draft`,看到折叠卡;展开能看到 YAML;**自动化模式下** `审批写入` 按钮调用现有 `approve_automation_draft`,**计划模式下**按钮置灰且带提示
 - [ ] 草稿如缺失集成,卡片底部显示黄色警告 + 安装链接
+- [ ] 切到执行模式时弹一次确认 dialog;输入框旁出现红色"⚠️ 实验中"标签;模型即使返回 `tool_call` 也只是灰行
+- [ ] 切换模式后下一条消息使用对应模式 prompt(可通过看后端日志或测试断言)
+- [ ] 模式切换后刷新页面,模式保持(`ui_state.json` 持久化)
 - [ ] 设置 modal 能切换模型;切换后状态条立即更新
 - [ ] 存在实体绑定:点 chip 后看到候选列表卡;选一个后状态条 💡 消失
 - [ ] 移动端(640px 以下)布局正确,核心功能可达
@@ -501,11 +635,14 @@ class ValidationResult:
 - [ ] 不存 MAC / IMEI / 手机号 / GPS 坐标
 - [ ] 模型尝试调用工具(`tool_call`)时,前端只显示灰行,后端不执行
 - [ ] `risk_confirmation` 的"确认执行"按钮在前端禁用,带提示
+- [ ] **执行模式即使被切到,B 阶段后端不路由任何 service call**(模型即使返回 `tool_call` 也只是回传给前端展示)
+- [ ] **模式越界(plan 模式收到 `tool_call`、automation 收到 `tool_call` 等)被后端拦截**,触发重试或 `mode_violation` 错误,不进对话历史
 
 ### 14.3 测试
 
 - [ ] `tests/test_chat_session.py` 覆盖正常一轮对话、JSON 协议失败的 system message 重试、第二次仍失败的 protocol_error 路径、上下文截断
-- [ ] `tests/test_protocol.py` 覆盖 5 种协议类型解析 + 非法 JSON + 缺失 `type` + `type` 不在白名单
+- [ ] `tests/test_protocol.py` 覆盖 5 种协议类型解析 + 非法 JSON + 缺失 `type` + `type` 不在白名单 + 三种模式的 `ALLOWED_TYPES_BY_MODE` 拒绝集合
+- [ ] `tests/test_ui_state.py` 覆盖 `last_mode` 非法值容错(默认回退 automation)、`execute_mode_warning_seen` 持久化、文件不存在时容错
 - [ ] `tests/test_environment.py` 覆盖三项必检 + advanced 项的 ok/缺失分支,以及 `failing_required_count` 准确性
 - [ ] `tests/test_presence.py` 覆盖 `list_presence_candidates` 排序(person 在前)、`bind_presence_entity` 校验拒绝(非 person/device_tracker、不存在的 entity_id)、`get_presence_binding` 未绑/已绑
 - [ ] `tests/test_conversations_storage.py` 覆盖滚动淘汰(>50)、单会话 200 上限、>5MB 强制清理
@@ -534,3 +671,15 @@ class ValidationResult:
 | "设备 / 实体候选选择器" | §6 `clarification` 组件 |
 | "小米设备筛选页" | 不在本 spec,留给 follow-up |
 | "执行日志页面" | 不在本 spec,留给 follow-up |
+
+## 17. 新增设计:聊天模式选择器(README 之外的扩展)
+
+**对应议题**:用户额外提出"仿照 Claude Code 把对话切成不同模式"。本 spec 在 §5.4 / §6.1 / §7.3 / §7.5 / §11.4 落地了三种模式 + 防御深度过滤。
+
+| 模式 | B 阶段是否真"动手" | 落点章节 |
+|------|------------------|---------|
+| 📋 计划 | 不动 | §5.4, §7.3.2, §7.5 |
+| ⚡ 自动化 | 写草稿(默认禁用,沿用现状) | §5.4, §7.3.2, §7.5 |
+| 🛠 执行 | **B 阶段不动**(实验占位) | §5.4, §7.3.2, §7.5 |
+
+执行模式真实控制设备 + "根据历史记录推荐自动化"两项延后到 follow-up spec 处理。
