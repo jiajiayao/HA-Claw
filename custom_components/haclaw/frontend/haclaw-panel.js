@@ -158,6 +158,28 @@ class HAclawPanel extends HTMLElement {
   }
 
   _switchMode(mode) {
+    if (mode === "execute") {
+      const seen = (() => {
+        try {
+          return localStorage.getItem("haclaw.execute_warning_seen") === "1";
+        } catch (_err) {
+          return false;
+        }
+      })();
+      if (!seen) {
+        const ok = window.confirm(
+          "🛠 执行模式 · 实验中\n\n" +
+            "工具执行层 v1.x 启用,本模式现在仅展示模型会怎么提议工具调用,不会真正控制设备。\n\n" +
+            "继续切换吗?",
+        );
+        if (!ok) return;
+        try {
+          localStorage.setItem("haclaw.execute_warning_seen", "1");
+        } catch (_err) {
+          // Ignore storage failures in embedded HA contexts.
+        }
+      }
+    }
     this._mode = mode;
     try {
       localStorage.setItem("haclaw.last_mode", mode);

@@ -168,3 +168,16 @@ def test_presence_binding_contract_is_present():
     assert "this._presenceBound = true" in source
     assert ".card.presence .presence-list" in source
     assert ".card.presence.done" in source
+
+
+def test_execute_mode_warning_contract_is_present():
+    source = PANEL_JS.read_text(encoding="utf-8")
+
+    assert 'if (mode === "execute")' in source
+    assert 'localStorage.getItem("haclaw.execute_warning_seen") === "1"' in source
+    assert "window.confirm(" in source
+    assert "工具执行层 v1.x 启用,本模式现在仅展示模型会怎么提议工具调用,不会真正控制设备。" in source
+    assert "继续切换吗?" in source
+    assert "if (!ok) return;" in source
+    assert 'localStorage.setItem("haclaw.execute_warning_seen", "1")' in source
+    assert 'localStorage.setItem("haclaw.last_mode", mode)' in source
