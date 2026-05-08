@@ -635,6 +635,149 @@ class HAclawPanel extends HTMLElement {
     return null;
   }
 
+  _openSettingsModal() {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal">
+        <div class="modal-head">
+          <span>设置</span>
+          <button class="modal-close">✕</button>
+        </div>
+        <div class="modal-section">
+          <h3>Provider</h3>
+          <div>当前模型: <code class="current-model"></code></div>
+          <div class="row">
+            <input type="text" id="new-model" placeholder="新模型名,例如 deepseek-coder" />
+            <button class="btn-primary" id="apply-model">切换</button>
+          </div>
+          <div><a href="/config/integrations/integration/haclaw" target="_blank">去 HA 修改高级配置 →</a></div>
+        </div>
+        <div class="modal-section">
+          <h3>环境</h3>
+          <button class="btn-secondary" id="recheck-env">重新检查环境</button>
+        </div>
+        <div class="modal-section">
+          <h3>存在感应</h3>
+          <button class="btn-secondary" id="rebind-presence">重新绑定</button>
+        </div>
+        <div class="modal-section">
+          <h3>对话</h3>
+          <button class="btn-secondary" id="clear-current">清空当前对话</button>
+          <button class="btn-secondary" id="clear-all">清空全部历史</button>
+        </div>
+        <div class="modal-foot">
+          <button class="btn-secondary modal-close">关闭</button>
+        </div>
+      </div>
+    `;
+    overlay.querySelector(".current-model").textContent = this._modelName || "未配置";
+    document.body.appendChild(overlay);
+    overlay.querySelectorAll(".modal-close").forEach((button) => {
+      button.addEventListener("click", () => overlay.remove());
+    });
+
+    overlay.querySelector("#apply-model")?.addEventListener("click", async () => {
+      const newModel = overlay.querySelector("#new-model").value.trim();
+      if (!newModel) {
+        return;
+      }
+      const result = await this._callService("switch_model", { model: newModel });
+      if (result?.success) {
+        this._modelName = newModel;
+        this._toast("模型已切换");
+        overlay.remove();
+        this._render();
+      } else {
+        this._toast(result?.message || "切换失败");
+      }
+    });
+    overlay.querySelector("#recheck-env")?.addEventListener("click", () => {
+      overlay.remove();
+      this._envCardShown = false;
+      try {
+        localStorage.removeItem("haclaw.env_dismissed");
+      } catch (_err) {
+        // Ignore storage failures in embedded HA contexts.
+      }
+      this._messages = this._messages.filter((message) => message.kind !== "env_check");
+      this._refreshState();
+    });
+    overlay.querySelector("#rebind-presence")?.addEventListener("click", () => {
+      overlay.remove();
+      this._messages = this._messages.filter(
+        (message) =>
+          message.kind !== "presence_bind" && message.kind !== "presence_bind_done",
+      );
+      this._maybeInjectPresenceCard();
+    });
+    overlay.querySelector("#clear-current")?.addEventListener("click", async () => {
+      await this._hass.connection.sendMessagePromise({
+        type: "haclaw/conversations/clear",
+        conversation_id: this._conversationId,
+      });
+      this._messages = [];
+      this._render();
+      overlay.remove();
+    });
+    overlay.querySelector("#clear-all")?.addEventListener("click", async () => {
+      await this._hass.connection.sendMessagePromise({
+        type: "haclaw/conversations/clear",
+      });
+      this._messages = [];
+      this._render();
+      overlay.remove();
+    });
+  }
+
+  async _openDrawer() {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay drawer";
+    overlay.innerHTML = `
+      <div class="modal drawer-panel">
+        <div class="modal-head">
+          <span>对话历史</span>
+          <button class="modal-close">✕</button>
+        </div>
+        <div class="drawer-body" id="drawer-list">加载中...</div>
+        <div class="modal-foot">
+          <button class="btn-primary" id="new-chat">+ 新对话</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.querySelectorAll(".modal-close").forEach((button) => {
+      button.addEventListener("click", () => overlay.remove());
+    });
+    overlay.querySelector("#new-chat")?.addEventListener("click", () => {
+      this._conversationId = `conv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      this._messages = [];
+      this._envCardShown = false;
+      this._render();
+      overlay.remove();
+    });
+
+    try {
+      const result = await this._hass.connection.sendMessagePromise({
+        type: "haclaw/conversations/list",
+      });
+      const conversations = result?.conversations || [];
+      const listEl = overlay.querySelector("#drawer-list");
+      if (conversations.length === 0) {
+        listEl.innerHTML = '<div class="muted">暂无历史</div>';
+      } else {
+        listEl.innerHTML = conversations
+          .map(
+            (conversation) =>
+              this._html`<div class="drawer-row">${conversation.id} <span class="muted">· ${String(conversation.message_count || 0)} 条</span></div>`,
+          )
+          .join("");
+      }
+    } catch (_err) {
+      overlay.querySelector("#drawer-list").textContent = "加载失败";
+    }
+  }
+
   _render() {
     if (!this.isConnected) {
       return;
@@ -787,6 +930,8 @@ class HAclawPanel extends HTMLElement {
         this._refreshState();
       });
     });
+    this.querySelector("#open-settings")?.addEventListener("click", () => this._openSettingsModal());
+    this.querySelector("#open-drawer")?.addEventListener("click", () => this._openDrawer());
     this.querySelector("#send-btn")?.addEventListener("click", () => this._onSend());
     this.querySelector("#chat-input")?.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
@@ -1368,10 +1513,61 @@ class HAclawPanel extends HTMLElement {
         color: #1b8f4d;
       }
 
+      .modal-section {
+        border-bottom: 1px solid var(--divider-color);
+        padding: 12px 16px;
+      }
+
+      .modal-section h3 {
+        font-size: 14px;
+        margin: 0 0 8px;
+      }
+
+      .modal-section .row {
+        display: flex;
+        gap: 8px;
+        margin: 6px 0;
+      }
+
+      .modal-section .row input {
+        background: var(--card-background-color);
+        border: 1px solid var(--divider-color);
+        border-radius: 6px;
+        color: var(--primary-text-color);
+        flex: 1;
+        padding: 8px;
+      }
+
+      .modal.drawer-panel {
+        border-radius: 0;
+        height: 100vh;
+        max-height: 100vh;
+        max-width: 360px;
+        position: fixed;
+        right: 0;
+        top: 0;
+      }
+
+      .drawer-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 12px 16px;
+      }
+
+      .drawer-row {
+        border-bottom: 1px solid var(--divider-color);
+        font-size: 13px;
+        padding: 8px 0;
+      }
+
       @media (max-width: 640px) {
         .modal {
           max-height: 92vh;
           width: 96%;
+        }
+
+        .modal.drawer-panel {
+          max-width: 100%;
         }
 
         .topbar .right .icon-btn:nth-child(3) {

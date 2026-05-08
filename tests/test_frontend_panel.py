@@ -181,3 +181,29 @@ def test_execute_mode_warning_contract_is_present():
     assert "if (!ok) return;" in source
     assert 'localStorage.setItem("haclaw.execute_warning_seen", "1")' in source
     assert 'localStorage.setItem("haclaw.last_mode", mode)' in source
+
+
+def test_settings_modal_and_history_drawer_contract_is_present():
+    source = PANEL_JS.read_text(encoding="utf-8")
+
+    assert 'this.querySelector("#open-settings")?.addEventListener("click", () => this._openSettingsModal())' in source
+    assert 'this.querySelector("#open-drawer")?.addEventListener("click", () => this._openDrawer())' in source
+    assert "_openSettingsModal()" in source
+    assert "当前模型:" in source
+    assert 'id="new-model"' in source
+    assert 'id="apply-model"' in source
+    assert '"switch_model"' in source
+    assert "模型已切换" in source
+    assert 'id="recheck-env"' in source
+    assert 'id="rebind-presence"' in source
+    assert 'id="clear-current"' in source
+    assert 'id="clear-all"' in source
+    assert '"haclaw/conversations/clear"' in source
+    assert "async _openDrawer()" in source
+    assert "对话历史" in source
+    assert '"haclaw/conversations/list"' in source
+    assert 'id="new-chat"' in source
+    assert "暂无历史" in source
+    assert ".modal-section" in source
+    assert ".modal.drawer-panel" in source
+    assert ".drawer-row" in source
