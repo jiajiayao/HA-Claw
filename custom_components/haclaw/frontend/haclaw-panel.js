@@ -149,7 +149,12 @@ class HAclawPanel extends HTMLElement {
   }
 
   _onChipClick(text) {
+    if (text === "认领我的存在实体") {
+      this._maybeInjectPresenceCard();
+      return;
+    }
     this._appendUserMessage(text);
+    this._sendChat(text);
   }
 
   _switchMode(mode) {
@@ -195,6 +200,15 @@ class HAclawPanel extends HTMLElement {
     if (m.kind === "env_check") {
       return this._renderEnvCheckCard(m.payload);
     }
+    if (m.kind === "presence_bind") {
+      return this._renderPresenceCard(m.candidates);
+    }
+    if (m.kind === "presence_bind_empty") {
+      return '<div class="card presence empty"><div class="card-msg">没有可用的 person.* / device_tracker.* 实体。请先在 HA 添加 person 或装 Companion App / 蓝牙追踪等集成,然后回来"重新检查环境"。</div></div>';
+    }
+    if (m.kind === "presence_bind_done") {
+      return this._html`<div class="card presence done">✅ 已绑定 ${m.entity_id}</div>`;
+    }
     if (m.kind === "thinking") {
       return `<div class="bubble assistant thinking">思考中...</div>`;
     }
@@ -228,8 +242,70 @@ class HAclawPanel extends HTMLElement {
 
   _renderFinalResponseBubble(payload) {
     const text = payload.message || "";
+    if (text.startsWith("[BIND_PRESENCE]")) {
+      queueMicrotask(() => this._maybeInjectPresenceCard());
+    }
     const display = text.replace(/^\[BIND_PRESENCE\]\s*/, "");
     return this._html`<div class="bubble assistant">${display}</div>`;
+  }
+
+  async _maybeInjectPresenceCard() {
+    if (
+      this._messages.some(
+        (message) =>
+          message.kind === "presence_bind" || message.kind === "presence_bind_done",
+      )
+    ) {
+      return;
+    }
+    try {
+      const result = await this._callService("list_presence_candidates", {});
+      const candidates = result?.candidates || [];
+      if (candidates.length === 0) {
+        this._messages.push({ kind: "presence_bind_empty" });
+      } else {
+        this._messages.push({ kind: "presence_bind", candidates });
+      }
+      this._render();
+    } catch (_err) {
+      // Keep chat usable if candidate listing fails.
+    }
+  }
+
+  async _bindPresence(entity_id) {
+    try {
+      const result = await this._callService("bind_presence_entity", { entity_id });
+      if (!result?.success) {
+        this._toast(result?.message || "绑定失败");
+        return;
+      }
+      this._presenceBound = true;
+      this._toast(`已绑定 ${entity_id}`);
+      this._messages = this._messages.map((message) =>
+        message.kind === "presence_bind"
+          ? { kind: "presence_bind_done", entity_id }
+          : message,
+      );
+      this._render();
+    } catch (err) {
+      this._toast(err?.message || "绑定失败");
+    }
+  }
+
+  _renderPresenceCard(candidates) {
+    const chipsHTML = (candidates || [])
+      .map(
+        (candidate) =>
+          this._html`<button class="cand-chip" data-presence="${candidate.id}">
+            <span class="cand-label">${candidate.label}</span>
+            <span class="cand-sub">${candidate.subtitle}</span>
+          </button>`,
+      )
+      .join("");
+    return `<div class="card presence">
+      <div class="card-msg">认领你的存在实体(只存 entity_id,不会读取 MAC、手机号、GPS 坐标)</div>
+      <div class="presence-list">${chipsHTML}</div>
+    </div>`;
   }
 
   _renderClarificationCard(payload) {
@@ -623,6 +699,9 @@ class HAclawPanel extends HTMLElement {
         this._appendUserMessage(label);
         this._sendChat(label);
       });
+    });
+    this.querySelectorAll(".cand-chip[data-presence]").forEach((el) => {
+      el.addEventListener("click", () => this._bindPresence(el.dataset.presence));
     });
     this.querySelectorAll(".cand-free-send[data-card]").forEach((el) => {
       el.addEventListener("click", () => {
@@ -1254,6 +1333,17 @@ class HAclawPanel extends HTMLElement {
         gap: 8px;
         justify-content: flex-end;
         padding: 12px 16px;
+      }
+
+      .card.presence .presence-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 8px;
+      }
+
+      .card.presence.done {
+        color: #1b8f4d;
       }
 
       @media (max-width: 640px) {

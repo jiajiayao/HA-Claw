@@ -146,3 +146,25 @@ def test_env_check_card_and_install_modal_contract_is_present():
     assert ".card.env-check .env-head" in source
     assert ".modal-overlay" in source
     assert ".modal-body" in source
+
+
+def test_presence_binding_contract_is_present():
+    source = PANEL_JS.read_text(encoding="utf-8")
+
+    assert 'if (text === "认领我的存在实体")' in source
+    assert "_maybeInjectPresenceCard()" in source
+    assert 'text.startsWith("[BIND_PRESENCE]")' in source
+    assert "queueMicrotask(() => this._maybeInjectPresenceCard())" in source
+    assert '"list_presence_candidates"' in source
+    assert '"bind_presence_entity"' in source
+    assert 'm.kind === "presence_bind"' in source
+    assert 'm.kind === "presence_bind_empty"' in source
+    assert 'm.kind === "presence_bind_done"' in source
+    assert "_renderPresenceCard(m.candidates)" in source
+    assert "只存 entity_id" in source
+    assert "不会读取 MAC、手机号、GPS 坐标" in source
+    assert '.cand-chip[data-presence]' in source
+    assert "_bindPresence(el.dataset.presence)" in source
+    assert "this._presenceBound = true" in source
+    assert ".card.presence .presence-list" in source
+    assert ".card.presence.done" in source
