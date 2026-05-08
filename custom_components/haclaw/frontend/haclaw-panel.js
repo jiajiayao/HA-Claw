@@ -211,6 +211,12 @@ class HAclawPanel extends HTMLElement {
     if (payload?.type === "automation_draft") {
       return this._renderDraftCard(payload);
     }
+    if (payload?.type === "risk_confirmation") {
+      return this._renderRiskCard(payload);
+    }
+    if (payload?.type === "tool_call") {
+      return this._renderToolCallLine(payload);
+    }
     if (payload?.type === "clarification") {
       return this._renderClarificationCard(payload);
     }
@@ -259,6 +265,30 @@ class HAclawPanel extends HTMLElement {
       <div class="cand-chips">${chipsHTML}</div>
       ${freeHTML}
     </div>`;
+  }
+
+  _renderRiskCard(payload) {
+    const planned = payload.planned_action
+      ? JSON.stringify(payload.planned_action, null, 2)
+      : "";
+    const risk = payload.risk_level || "high";
+    const detailsHTML = planned
+      ? `<details><summary>计划动作</summary><pre>${this._escape(planned)}</pre></details>`
+      : "";
+    return `<div class="card risk risk-${this._escape(risk)}">
+      <div class="risk-head">⚠️ 高风险操作 · ${this._escape(risk)}</div>
+      <div class="risk-msg">${this._escape(payload.message || "")}</div>
+      ${detailsHTML}
+      <div class="draft-actions">
+        <button class="btn-primary" disabled title="工具执行层 v1.x 启用,本期不真执行">确认执行</button>
+        <button class="btn-secondary">取消</button>
+      </div>
+    </div>`;
+  }
+
+  _renderToolCallLine(payload) {
+    const tool = payload.tool || "?";
+    return this._html`<div class="tool-call-line">↪ 模型尝试调用 <code>${tool}</code>(本阶段不执行)</div>`;
   }
 
   _renderDraftCard(payload) {
@@ -965,6 +995,42 @@ class HAclawPanel extends HTMLElement {
 
       .muted {
         color: var(--secondary-text-color);
+      }
+
+      .card.risk {
+        background: rgba(219, 68, 55, 0.05);
+        border-color: #db4437;
+      }
+
+      .card.risk .risk-head {
+        color: #db4437;
+        font-weight: 700;
+        margin-bottom: 8px;
+      }
+
+      .card.risk .risk-msg {
+        margin-bottom: 8px;
+      }
+
+      .card.risk pre {
+        background: rgba(0, 0, 0, 0.05);
+        border-radius: 6px;
+        font-size: 12px;
+        padding: 6px;
+      }
+
+      .tool-call-line {
+        align-self: flex-start;
+        color: var(--secondary-text-color);
+        font-size: 12px;
+        font-style: italic;
+        padding: 6px 12px;
+      }
+
+      .tool-call-line code {
+        background: rgba(0, 0, 0, 0.05);
+        border-radius: 4px;
+        padding: 1px 4px;
       }
 
       @media (max-width: 640px) {

@@ -104,3 +104,21 @@ def test_automation_draft_card_contract_is_present():
     assert "_toast(text)" in source
     assert ".card.draft .draft-head" in source
     assert ".draft-actions" in source
+
+
+def test_risk_and_tool_call_rendering_contract_is_present():
+    source = PANEL_JS.read_text(encoding="utf-8")
+
+    assert 'if (payload?.type === "risk_confirmation")' in source
+    assert "_renderRiskCard(payload)" in source
+    assert 'if (payload?.type === "tool_call")' in source
+    assert "_renderToolCallLine(payload)" in source
+    assert "payload.planned_action" in source
+    assert 'class="card risk risk-' in source
+    assert "高风险操作" in source
+    assert "工具执行层 v1.x 启用,本期不真执行" in source
+    assert "确认执行" in source
+    assert "本阶段不执行" in source
+    assert "tool-call-line" in source
+    assert ".card.risk" in source
+    assert ".tool-call-line" in source
