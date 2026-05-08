@@ -124,3 +124,96 @@ def _require_string(payload: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ProtocolError(f"{key} must be a non-empty string.")
     return value
+
+
+# Range B chat UI protocol additions (mode-aware parser + migration).
+# See spec §7.5, §7.6, §7.7.
+
+from ..const import MODE_AUTOMATION, MODE_EXECUTE, MODE_PLAN  # noqa: E402
+
+PROTOCOL_TYPES = SUPPORTED_TYPES
+
+ALLOWED_TYPES_BY_MODE: dict[str, set[str]] = {
+    MODE_PLAN: {"final_response", "clarification"},
+    MODE_AUTOMATION: {"final_response", "clarification", "automation_draft"},
+    MODE_EXECUTE: {
+        "final_response",
+        "clarification",
+        "automation_draft",
+        "risk_confirmation",
+        "tool_call",
+    },
+}
+
+
+def parse_assistant_json(raw: str) -> dict[str, Any]:
+    """Parse a model JSON response and apply clarification migration.
+
+    Lighter than parse_agent_response: no per-type validation here;
+    callers pair this with validate_for_mode().
+    """
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ProtocolError(f"模型输出不是合法 JSON: {exc.msg}") from exc
+    if not isinstance(obj, dict):
+        raise ProtocolError("模型输出 JSON 必须是对象")
+    if "type" not in obj:
+        raise ProtocolError("模型输出缺少 type 字段")
+    if obj["type"] not in PROTOCOL_TYPES:
+        raise ProtocolError(f"模型输出 type 不在 whitelist 内: {obj['type']!r}")
+    if obj["type"] == "clarification":
+        obj = migrate_clarification(obj)
+    return obj
+
+
+def migrate_clarification(msg: dict[str, Any]) -> dict[str, Any]:
+    """Migrate legacy {entity_id, name} candidates to {id, label, subtitle}."""
+    candidates = msg.get("candidates")
+    if not isinstance(candidates, list):
+        return msg
+    migrated = []
+    for cand in candidates:
+        if not isinstance(cand, dict):
+            continue
+        if "id" in cand and "label" in cand:
+            migrated.append(cand)
+            continue
+        eid = cand.get("entity_id")
+        name = cand.get("name", eid)
+        if eid:
+            migrated.append({"id": eid, "label": name, "subtitle": eid})
+    msg = dict(msg)
+    msg["candidates"] = migrated
+    msg.setdefault("allow_free_text", False)
+    return msg
+
+
+def validate_for_mode(msg: dict[str, Any], mode: str) -> None:
+    """Validate that the assistant message type is allowed in the given mode.
+
+    Also performs schema checks specific to range-B types (clarification 2+
+    candidates with id/label, automation_draft.rationale required).
+    """
+    msg_type = msg.get("type")
+    allowed = ALLOWED_TYPES_BY_MODE.get(mode, set())
+    if msg_type not in allowed:
+        raise ProtocolError(f"模式 {mode} 不允许 type={msg_type!r}")
+
+    if msg_type == "clarification":
+        cands = msg.get("candidates", [])
+        if not isinstance(cands, list) or len(cands) < 2:
+            raise ProtocolError("clarification 至少需要 2 个 candidates")
+        for c in cands:
+            if not isinstance(c, dict) or "id" not in c or "label" not in c:
+                raise ProtocolError("clarification candidate 必须含 id 和 label")
+
+    if msg_type == "automation_draft":
+        if "rationale" not in msg or not isinstance(msg["rationale"], dict):
+            raise ProtocolError("automation_draft 缺少 rationale 字段")
+        required = {"entities", "trigger", "conditions", "actions", "edge_cases"}
+        missing = required - set(msg["rationale"].keys())
+        if missing:
+            raise ProtocolError(
+                f"automation_draft.rationale 缺少字段: {sorted(missing)}"
+            )
