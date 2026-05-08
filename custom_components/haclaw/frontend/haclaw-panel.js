@@ -2,116 +2,174 @@ class HAclawPanel extends HTMLElement {
   constructor() {
     super();
     this._hass = undefined;
-    this._busy = "";
-    this._result = undefined;
-    this._draftId = "";
+    this._messages = [];
+    this._mode = this._restoreMode();
+    this._modelName = "";
+    this._providerOk = false;
+    this._envFailingCount = 0;
+    this._presenceBound = false;
+    this._envCardShown = false;
+    this._envState = null;
+    this._busy = false;
+    this._conversationId = `conv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    this._suggestionChips = [
+      "打开客厅灯",
+      "生成晚 7 点开净化器的自动化",
+      "当前模型连得通吗",
+      "认领我的存在实体",
+      "检查我的 HA 环境",
+      "解释一下 automations.yaml 是什么",
+    ];
   }
 
   set hass(hass) {
     this._hass = hass;
+    this._readModelFromHass();
     this._render();
   }
 
   connectedCallback() {
     this._render();
+    this._refreshState();
   }
 
-  async _testConnection() {
-    await this._call("test", "test_connection", {});
-  }
-
-  async _createDraft() {
-    const title = this.querySelector("#draft-title")?.value?.trim();
-    const description = this.querySelector("#draft-description")?.value?.trim() || "";
-    const triggerText = this.querySelector("#draft-trigger")?.value || "[]";
-    const actionText = this.querySelector("#draft-action")?.value || "[]";
-
-    if (!title) {
-      this._result = { success: false, message: "请填写草稿标题。" };
-      this._render();
-      return;
-    }
-
-    let trigger;
-    let action;
+  _restoreMode() {
     try {
-      trigger = JSON.parse(triggerText);
-      action = JSON.parse(actionText);
-    } catch (err) {
-      this._result = { success: false, message: `JSON 解析失败：${err.message}` };
-      this._render();
-      return;
+      const value = localStorage.getItem("haclaw.last_mode");
+      if (["plan", "automation", "execute"].includes(value)) {
+        return value;
+      }
+    } catch (_err) {
+      // Ignore storage failures in embedded HA contexts.
     }
-
-    const response = await this._call("draft", "create_automation_draft", {
-      title,
-      description,
-      source: "panel",
-      automation: {
-        alias: title,
-        trigger,
-        condition: [],
-        action,
-        mode: "single",
-      },
-    });
-
-    if (response?.draft?.id) {
-      this._draftId = response.draft.id;
-      this._render();
-    }
+    return "automation";
   }
 
-  async _approveDraft() {
-    const draftId =
-      this.querySelector("#draft-id")?.value?.trim() || this._draftId || "";
-    const confirmed = Boolean(this.querySelector("#risk-confirmed")?.checked);
-
-    if (!draftId) {
-      this._result = { success: false, message: "请先创建或填写草稿 ID。" };
-      this._render();
-      return;
-    }
-
-    await this._call("approve", "approve_automation_draft", {
-      draft_id: draftId,
-      confirmed,
-    });
-  }
-
-  async _call(kind, service, serviceData) {
+  _readModelFromHass() {
     if (!this._hass) {
-      this._result = { success: false, message: "Home Assistant 尚未连接。" };
-      this._render();
-      return undefined;
+      return;
     }
+    const entries = Object.values(this._hass.config?.entries || {}).filter(
+      (entry) => entry.domain === "haclaw",
+    );
+    const options = entries[0]?.options || entries[0]?.data || {};
+    this._modelName = options.model || "";
+  }
 
-    this._busy = kind;
-    this._result = undefined;
-    this._render();
+  async _refreshState() {
+    if (!this._hass) {
+      return;
+    }
+    const dismissedLocal = (() => {
+      try {
+        return localStorage.getItem("haclaw.env_dismissed") === "1";
+      } catch (_err) {
+        return false;
+      }
+    })();
 
     try {
-      const result = await this._hass.connection.sendMessagePromise({
-        type: "call_service",
-        domain: "haclaw",
-        service,
-        service_data: serviceData,
-        return_response: true,
-      });
-      const response = result?.response || result || {};
-      this._result = response;
-      this._busy = "";
-      this._render();
-      return response;
-    } catch (err) {
-      this._result = {
-        success: false,
-        message: err?.message || "服务调用失败。",
-      };
-      this._busy = "";
-      this._render();
-      return undefined;
+      const result = await this._callService("get_environment_readiness", {});
+      if (result) {
+        this._envState = result;
+        if (dismissedLocal) {
+          result.dismissed = true;
+        }
+        this._providerOk = result.items?.[0]?.ok ?? false;
+        this._envFailingCount = result.failing_required_count ?? 0;
+        if (!result.dismissed && this._envFailingCount > 0 && !this._envCardShown) {
+          this._messages.unshift({ kind: "env_check", payload: result });
+          this._envCardShown = true;
+        }
+      }
+    } catch (_err) {
+      // Environment status is advisory; keep the panel usable if it fails.
     }
+
+    try {
+      const presence = await this._callService("get_presence_binding", {});
+      this._presenceBound = Boolean(presence?.me_person_entity_id);
+    } catch (_err) {
+      this._presenceBound = false;
+    }
+
+    this._render();
+  }
+
+  async _callService(service, data) {
+    const result = await this._hass.connection.sendMessagePromise({
+      type: "call_service",
+      domain: "haclaw",
+      service,
+      service_data: data,
+      return_response: true,
+    });
+    return result?.response;
+  }
+
+  _onSend() {
+    const input = this.querySelector("#chat-input");
+    if (!input) {
+      return;
+    }
+    const text = input.value.trim();
+    if (!text || this._busy) {
+      return;
+    }
+    input.value = "";
+    this._appendUserMessage(text);
+  }
+
+  _appendUserMessage(text) {
+    this._messages.push({ kind: "user_text", text });
+    this._render();
+  }
+
+  _onChipClick(text) {
+    this._appendUserMessage(text);
+  }
+
+  _switchMode(mode) {
+    this._mode = mode;
+    try {
+      localStorage.setItem("haclaw.last_mode", mode);
+    } catch (_err) {
+      // Ignore storage failures in embedded HA contexts.
+    }
+    this._render();
+  }
+
+  _html(strings, ...values) {
+    let out = strings[0];
+    for (let i = 0; i < values.length; i += 1) {
+      out += this._escape(values[i]) + strings[i + 1];
+    }
+    return out;
+  }
+
+  _escape(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;");
+  }
+
+  _modeLabel(mode) {
+    return (
+      {
+        plan: "📋 计划",
+        automation: "⚡ 自动化",
+        execute: "🛠 执行 ⚠️",
+      }[mode] || mode
+    );
+  }
+
+  _renderMessage(m) {
+    if (m.kind === "user_text") {
+      return this._html`<div class="bubble user">${m.text}</div>`;
+    }
+    return "";
   }
 
   _render() {
@@ -119,269 +177,273 @@ class HAclawPanel extends HTMLElement {
       return;
     }
 
-    const result = this._result;
-    const resultClass = result?.success ? "ok" : result ? "error" : "";
-    const triggerValue = JSON.stringify(
-      [{ platform: "time", at: "19:00:00" }],
-      null,
-      2,
-    );
-    const actionValue = JSON.stringify(
-      [
-        {
-          service: "light.turn_on",
-          target: { entity_id: "light.living_room" },
-        },
-      ],
-      null,
-      2,
-    );
+    const status = `${this._modelName || "未配置"} · ${
+      this._providerOk ? "✅" : "❌"
+    }`;
+    const failingBadge =
+      this._envFailingCount > 0
+        ? this._html`<span class="badge warn">⚠️${String(this._envFailingCount)}</span>`
+        : "";
+    const presenceHint = this._presenceBound
+      ? ""
+      : '<span class="badge hint">💡未绑存在</span>';
+
+    const isEmpty = this._messages.length === 0;
+    const greetingHTML = isEmpty
+      ? `
+      <div class="empty">
+        <h2>HAclaw,你想让我做什么?</h2>
+        <div class="chips">
+          ${this._suggestionChips
+            .map((chip) => this._html`<button class="chip" data-chip="${chip}">${chip}</button>`)
+            .join("")}
+        </div>
+      </div>
+    `
+      : "";
+
+    const messagesHTML = this._messages
+      .map((message) => this._renderMessage(message))
+      .join("");
+    const modesHTML = ["plan", "automation", "execute"]
+      .map(
+        (mode) =>
+          `<button class="mode-chip ${
+            mode === this._mode ? "active" : ""
+          }" data-mode="${mode}">${this._escape(this._modeLabel(mode))}</button>`,
+      )
+      .join("");
 
     this.innerHTML = `
       <main class="page">
         <header class="topbar">
-          <div>
-            <h1>HAclaw</h1>
-            <p>中文智能家居助手</p>
+          <div class="left">${this._html`HAclaw · ${status}`}</div>
+          <div class="right">
+            ${presenceHint}
+            ${failingBadge}
+            <button class="icon-btn" id="open-settings">⚙</button>
+            <button class="icon-btn" id="open-drawer">☰</button>
           </div>
-          <button class="icon-button" id="test-connection" title="测试连接">
-            <ha-icon icon="mdi:connection"></ha-icon>
-            <span>${this._busy === "test" ? "测试中" : "测试连接"}</span>
-          </button>
         </header>
-
-        <section class="grid">
-          <div class="panel">
-            <h2>自动化草稿</h2>
-            <label>
-              <span>标题</span>
-              <input id="draft-title" value="晚上打开客厅灯" />
-            </label>
-            <label>
-              <span>说明</span>
-              <input id="draft-description" value="每天晚上 7 点打开客厅灯，审批前不会启用。" />
-            </label>
-            <label>
-              <span>触发</span>
-              <textarea id="draft-trigger" spellcheck="false">${triggerValue}</textarea>
-            </label>
-            <label>
-              <span>动作</span>
-              <textarea id="draft-action" spellcheck="false">${actionValue}</textarea>
-            </label>
-            <button class="primary" id="create-draft">
-              <ha-icon icon="mdi:file-document-edit-outline"></ha-icon>
-              <span>${this._busy === "draft" ? "保存中" : "保存草稿"}</span>
-            </button>
-          </div>
-
-          <div class="panel">
-            <h2>审批写入</h2>
-            <label>
-              <span>草稿 ID</span>
-              <input id="draft-id" value="${this._escape(this._draftId)}" />
-            </label>
-            <label class="check">
-              <input id="risk-confirmed" type="checkbox" />
-              <span>确认风险操作</span>
-            </label>
-            <button class="primary" id="approve-draft">
-              <ha-icon icon="mdi:check-decagram-outline"></ha-icon>
-              <span>${this._busy === "approve" ? "写入中" : "审批写入"}</span>
-            </button>
-            <div class="risk">
-              <strong>写入目标</strong>
-              <code>/config/haclaw/automations.yaml</code>
-            </div>
-          </div>
-        </section>
-
-        <section class="result ${resultClass}">
+        <section class="conversation">${greetingHTML}${messagesHTML}</section>
+        <footer class="composer">
+          <div class="modes">${modesHTML}</div>
           ${
-            result
-              ? `<strong>${this._escape(result.message || "执行完成")}</strong>
-                 <pre>${this._escape(JSON.stringify(result, null, 2))}</pre>`
-              : "<strong>等待操作</strong>"
+            this._mode === "execute"
+              ? '<div class="execute-warn">⚠️ 执行模式实验中,本期不会真正控制设备</div>'
+              : ""
           }
-        </section>
+          <div class="input-row">
+            <input id="chat-input" type="text" placeholder="输入消息..." />
+            <button id="send-btn">发送</button>
+          </div>
+        </footer>
       </main>
-
-      <style>
-        .page {
-          color: var(--primary-text-color);
-          display: flex;
-          flex-direction: column;
-          gap: 16px;
-          padding: 20px;
-        }
-
-        .topbar {
-          align-items: center;
-          border-bottom: 1px solid var(--divider-color);
-          display: flex;
-          justify-content: space-between;
-          gap: 16px;
-          padding-bottom: 16px;
-        }
-
-        h1,
-        h2,
-        p {
-          margin: 0;
-        }
-
-        h1 {
-          font-size: 28px;
-          font-weight: 650;
-        }
-
-        h2 {
-          font-size: 18px;
-          font-weight: 650;
-        }
-
-        p {
-          color: var(--secondary-text-color);
-          font-size: 14px;
-          margin-top: 4px;
-        }
-
-        .grid {
-          display: grid;
-          gap: 16px;
-          grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-        }
-
-        .panel {
-          border: 1px solid var(--divider-color);
-          border-radius: 8px;
-          display: flex;
-          flex-direction: column;
-          gap: 14px;
-          padding: 16px;
-        }
-
-        label {
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-          font-size: 13px;
-          font-weight: 600;
-        }
-
-        input,
-        textarea {
-          background: var(--card-background-color);
-          border: 1px solid var(--divider-color);
-          border-radius: 6px;
-          box-sizing: border-box;
-          color: var(--primary-text-color);
-          font: inherit;
-          min-width: 0;
-          padding: 10px;
-          width: 100%;
-        }
-
-        textarea {
-          font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-          min-height: 150px;
-          resize: vertical;
-        }
-
-        button {
-          align-items: center;
-          border: 0;
-          border-radius: 6px;
-          cursor: pointer;
-          display: inline-flex;
-          font: inherit;
-          font-weight: 650;
-          gap: 8px;
-          min-height: 40px;
-          justify-content: center;
-          padding: 0 14px;
-        }
-
-        .primary,
-        .icon-button {
-          background: var(--primary-color);
-          color: var(--text-primary-color);
-        }
-
-        .check {
-          align-items: center;
-          flex-direction: row;
-          font-weight: 600;
-        }
-
-        .check input {
-          width: auto;
-        }
-
-        .risk,
-        .result {
-          border: 1px solid var(--divider-color);
-          border-radius: 8px;
-          padding: 14px;
-        }
-
-        .risk {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-        }
-
-        code,
-        pre {
-          font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-          overflow-wrap: anywhere;
-          white-space: pre-wrap;
-        }
-
-        .result.ok {
-          border-color: var(--success-color, #1b8f4d);
-        }
-
-        .result.error {
-          border-color: var(--error-color, #db4437);
-        }
-
-        pre {
-          margin: 10px 0 0;
-          max-height: 360px;
-          overflow: auto;
-        }
-
-        @media (max-width: 640px) {
-          .page {
-            padding: 12px;
-          }
-
-          .topbar {
-            align-items: stretch;
-            flex-direction: column;
-          }
-        }
-      </style>
+      <style>${this._styles()}</style>
     `;
 
-    this.querySelector("#test-connection")?.addEventListener("click", () =>
-      this._testConnection(),
-    );
-    this.querySelector("#create-draft")?.addEventListener("click", () =>
-      this._createDraft(),
-    );
-    this.querySelector("#approve-draft")?.addEventListener("click", () =>
-      this._approveDraft(),
-    );
+    this._wireEvents();
   }
 
-  _escape(value) {
-    return String(value)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;");
+  _wireEvents() {
+    this.querySelectorAll(".chip[data-chip]").forEach((el) => {
+      el.addEventListener("click", () => this._onChipClick(el.dataset.chip));
+    });
+    this.querySelectorAll(".mode-chip[data-mode]").forEach((el) => {
+      el.addEventListener("click", () => this._switchMode(el.dataset.mode));
+    });
+    this.querySelector("#send-btn")?.addEventListener("click", () => this._onSend());
+    this.querySelector("#chat-input")?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        this._onSend();
+      }
+    });
+  }
+
+  _styles() {
+    return `
+      .page {
+        color: var(--primary-text-color);
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+      }
+
+      .topbar {
+        align-items: center;
+        border-bottom: 1px solid var(--divider-color);
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 16px;
+      }
+
+      .topbar .right {
+        align-items: center;
+        display: flex;
+        gap: 8px;
+      }
+
+      .badge {
+        border-radius: 12px;
+        font-size: 12px;
+        padding: 2px 8px;
+      }
+
+      .badge.warn {
+        background: rgba(219, 68, 55, 0.15);
+        color: #db4437;
+      }
+
+      .badge.hint {
+        background: rgba(255, 193, 7, 0.15);
+        color: #b88d00;
+      }
+
+      .icon-btn {
+        background: transparent;
+        border: 0;
+        color: var(--primary-text-color);
+        cursor: pointer;
+        font-size: 18px;
+      }
+
+      .conversation {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        gap: 12px;
+        overflow-y: auto;
+        padding: 16px;
+      }
+
+      .empty {
+        margin-top: 60px;
+        text-align: center;
+      }
+
+      .empty h2 {
+        font-size: 28px;
+        font-weight: 650;
+        margin: 0 0 24px;
+      }
+
+      .empty .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        justify-content: center;
+      }
+
+      .chip {
+        background: var(--card-background-color);
+        border: 1px solid var(--divider-color);
+        border-radius: 24px;
+        color: var(--primary-text-color);
+        cursor: pointer;
+        font-size: 14px;
+        min-height: 44px;
+        padding: 12px 20px;
+      }
+
+      .chip:hover {
+        background: var(--secondary-background-color);
+      }
+
+      .composer {
+        border-top: 1px solid var(--divider-color);
+        padding: 12px 16px;
+      }
+
+      .modes {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+
+      .mode-chip {
+        background: transparent;
+        border: 1px solid var(--divider-color);
+        border-radius: 16px;
+        color: var(--primary-text-color);
+        cursor: pointer;
+        font-size: 13px;
+        padding: 6px 14px;
+      }
+
+      .mode-chip.active {
+        background: var(--primary-color);
+        border-color: var(--primary-color);
+        color: var(--text-primary-color);
+      }
+
+      .execute-warn {
+        color: #db4437;
+        font-size: 12px;
+        padding: 4px 8px;
+      }
+
+      .input-row {
+        display: flex;
+        gap: 8px;
+      }
+
+      .input-row input {
+        background: var(--card-background-color);
+        border: 1px solid var(--divider-color);
+        border-radius: 6px;
+        color: var(--primary-text-color);
+        flex: 1;
+        padding: 10px 12px;
+      }
+
+      .input-row button {
+        background: var(--primary-color);
+        border: 0;
+        border-radius: 6px;
+        color: var(--text-primary-color);
+        cursor: pointer;
+        min-height: 44px;
+        padding: 10px 20px;
+      }
+
+      .bubble {
+        border-radius: 12px;
+        max-width: 75%;
+        padding: 12px 16px;
+        word-wrap: break-word;
+      }
+
+      .bubble.user {
+        align-self: flex-end;
+        background: var(--primary-color);
+        color: var(--text-primary-color);
+      }
+
+      .bubble.assistant {
+        align-self: flex-start;
+        background: var(--card-background-color);
+        border: 1px solid var(--divider-color);
+      }
+
+      @media (max-width: 640px) {
+        .topbar .right .icon-btn:nth-child(3) {
+          display: none;
+        }
+
+        .empty .chips {
+          flex-direction: column;
+        }
+
+        .modes {
+          flex-wrap: wrap;
+        }
+
+        .mode-chip {
+          flex: 1;
+          min-width: 80px;
+        }
+      }
+    `;
   }
 }
 
