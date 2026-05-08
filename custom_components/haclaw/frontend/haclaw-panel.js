@@ -360,7 +360,7 @@ class HAclawPanel extends HTMLElement {
 
     const chipsHTML = cands
       .map((candidate) =>
-        this._html`<button class="cand-chip" data-card="${cardId}" data-label="${candidate.label || ""}">
+        this._html`<button class="cand-chip" data-card="${cardId}" data-label="${candidate.label || ""}" data-id="${candidate.id || ""}">
           <span class="cand-label">${candidate.label || ""}</span>
           ${
             candidate.subtitle
@@ -933,8 +933,9 @@ class HAclawPanel extends HTMLElement {
     const clarification = this._closestPanelTarget(event, ".cand-chip[data-label]");
     if (clarification) {
       const label = clarification.dataset.label;
+      const reply = this._formatCandidateReply(label, clarification.dataset.id);
       this._appendUserMessage(label);
-      this._sendChat(label);
+      this._sendChat(reply);
       return;
     }
 
@@ -1018,6 +1019,13 @@ class HAclawPanel extends HTMLElement {
     input.value = "";
     this._appendUserMessage(text);
     this._sendChat(text);
+  }
+
+  _formatCandidateReply(label, id) {
+    if (id && id.includes(".") && id !== label) {
+      return `${label} (${id})`;
+    }
+    return label;
   }
 
   _handlePanelAction(actionEl) {

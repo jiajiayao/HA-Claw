@@ -383,7 +383,12 @@ class IntegrationServiceTests(unittest.IsolatedAsyncioTestCase):
         handler = getattr(haclaw, "_async_handle_ws_chat", None)
         self.assertIsNotNone(handler)
         with tempfile.TemporaryDirectory() as tmp_dir:
-            hass = FakeHass(tmp_dir)
+            purifier = FakeState(
+                "fan.mi_air_purifier",
+                state="off",
+                attributes={"friendly_name": "米家空气净化器"},
+            )
+            hass = FakeHass(tmp_dir, entity_ids=[purifier])
             connection = FakeConnection()
             fake = {
                 "conversation_id": "c1",
@@ -408,7 +413,7 @@ class IntegrationServiceTests(unittest.IsolatedAsyncioTestCase):
                         "id": 1,
                         "type": WS_TYPE_CHAT,
                         "conversation_id": "c1",
-                        "user_message": "hi",
+                        "user_message": "生成晚 7 点开净化器的自动化",
                         "mode": "automation",
                     },
                 )
@@ -416,6 +421,10 @@ class IntegrationServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(connection.errors, [])
             self.assertEqual(connection.results, [(1, fake)])
             run_turn.assert_awaited_once()
+            kwargs = run_turn.await_args.kwargs
+            self.assertIn("米家空气净化器", kwargs["entity_context"])
+            self.assertEqual(kwargs["entity_candidates"][0]["id"], "fan.mi_air_purifier")
+            self.assertTrue(kwargs["has_controllable_entities"])
 
     def test_ws_chat_schema_rejects_invalid_mode(self):
         handler = getattr(haclaw, "_async_handle_ws_chat", None)

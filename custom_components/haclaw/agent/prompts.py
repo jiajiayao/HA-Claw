@@ -33,6 +33,9 @@ BASE_SYSTEM_PROMPT = """\
 - 绑定的存在实体: {me_status}
 - 当前模型: {model_name}
 
+当前 HA 设备上下文:
+{entity_context}
+
 特殊指令:
 - 如果"绑定的存在实体"为"未绑定",并且用户的请求涉及到家/离家/在家时/不在家时类自动化,请返回 final_response 类型,且 message 字段必须包含字符串 "[BIND_PRESENCE]"(放在中文说明的开头);前端会据此插入绑定向导卡片。其他场景下严禁使用此 marker。
 """
@@ -59,6 +62,8 @@ MODE_SUFFIX_AUTOMATION = """\
 【提问规则】
 - 缺信息时优先用 clarification 类型问
 - candidates 可 1-6 项;如果是开放式问题,可以不提供 candidates,但必须设置 allow_free_text=true
+- 选择设备/实体时必须优先使用"当前 HA 设备上下文"里的实体生成 candidates 让用户点选;不要要求用户手输 entity_id
+- 如果当前没有可控制设备实体,不要问 entity_id;直接说明需要先添加设备/集成,可提示小米用户安装 Xiaomi Miot Auto 或 Xiaomi Home 官方集成
 - 一次只问一个最关键的维度
 - 最多 4 轮 clarification,4 轮后用合理默认值生成 draft + rationale 标注"假设了 X"
 
@@ -110,10 +115,18 @@ def build_system_prompt(
     mode: str,
     me_entity_id: str | None,
     model_name: str,
+    entity_context: str | None = None,
 ) -> str:
     """Assemble the mode-aware HAclaw system prompt for chat sessions."""
     if mode not in ALL_MODES:
         raise ValueError(f"unknown mode: {mode}")
     me_status = me_entity_id or "未绑定"
-    base = BASE_SYSTEM_PROMPT.format(me_status=me_status, model_name=model_name)
+    context = (entity_context or "").strip() or (
+        "未附加设备扫描结果。需要设备时不要编造 entity_id,不要要求用户手输 entity_id。"
+    )
+    base = BASE_SYSTEM_PROMPT.format(
+        me_status=me_status,
+        model_name=model_name,
+        entity_context=context,
+    )
     return base + "\n\n" + _MODE_SUFFIXES[mode]

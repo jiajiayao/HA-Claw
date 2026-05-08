@@ -50,6 +50,18 @@ def test_bound_presence_shows_entity_in_context() -> None:
     assert "person.jiajia" in prompt
 
 
+def test_entity_context_is_included_when_present() -> None:
+    prompt = build_system_prompt(
+        mode=MODE_AUTOMATION,
+        me_entity_id=None,
+        model_name="m",
+        entity_context="当前 HA 可控制设备实体: fan.mi_air_purifier",
+    )
+
+    assert "fan.mi_air_purifier" in prompt
+    assert "不要要求用户手输 entity_id" in prompt
+
+
 def test_invalid_mode_raises() -> None:
     with pytest.raises(ValueError):
         build_system_prompt(mode="garbage", me_entity_id=None, model_name="m")

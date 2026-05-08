@@ -10,6 +10,7 @@ from ..const import (
     DEFAULT_CHAT_MAX_TOKENS,
     MAX_HISTORY_CHARS,
     MAX_USER_MESSAGE_CHARS,
+    MODE_AUTOMATION,
 )
 from ..storage import conversations as conv_store
 from ..storage.presence import load_binding
@@ -38,6 +39,9 @@ async def run_single_turn(
     provider_client: Any,
     model_name: str,
     max_tokens: int = DEFAULT_CHAT_MAX_TOKENS,
+    entity_context: str = "",
+    has_controllable_entities: bool = True,
+    entity_candidates: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     if not user_message.strip():
         raise ChatSessionError("用户消息不能为空")
@@ -48,7 +52,10 @@ async def run_single_turn(
 
     me_entity = load_binding(presence_path)
     system_prompt = build_system_prompt(
-        mode=mode, me_entity_id=me_entity, model_name=model_name,
+        mode=mode,
+        me_entity_id=me_entity,
+        model_name=model_name,
+        entity_context=entity_context,
     )
 
     history = _load_history_messages(conversations_path, conversation_id)
@@ -56,6 +63,28 @@ async def run_single_turn(
         conversations_path, conversation_id,
         {"role": "user", "content": user_message},
     )
+
+    preflight_msg = _preflight_automation_entity_selection(
+        user_message=user_message,
+        mode=mode,
+        has_controllable_entities=has_controllable_entities,
+        entity_candidates=entity_candidates or [],
+    )
+    if preflight_msg is not None:
+        conv_store.append_message(
+            conversations_path, conversation_id,
+            {
+                "role": "assistant",
+                "type": preflight_msg["type"],
+                "content": preflight_msg,
+            },
+        )
+        return {
+            "conversation_id": conversation_id,
+            "assistant_message": preflight_msg,
+            "usage": {},
+            "model": model_name,
+        }
 
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(history)
@@ -130,3 +159,55 @@ def _load_history_messages(
         out.append(entry)
     out.reverse()
     return out
+
+
+def _preflight_automation_entity_selection(
+    *,
+    user_message: str,
+    mode: str,
+    has_controllable_entities: bool,
+    entity_candidates: list[dict[str, str]],
+) -> dict[str, Any] | None:
+    if mode != MODE_AUTOMATION or not _looks_like_device_automation_request(
+        user_message
+    ):
+        return None
+
+    if entity_candidates:
+        return {
+            "type": "clarification",
+            "message": "我扫描到这些可能的设备,请选择要用于自动化的那个。",
+            "candidates": entity_candidates[:6],
+            "allow_free_text": False,
+        }
+
+    if not has_controllable_entities:
+        return {
+            "type": "final_response",
+            "message": (
+                "我扫描了当前 Home Assistant,没有发现可控制设备实体。"
+                "请先在 HA 添加设备或集成;如果你用小米/米家设备,可以通过 "
+                "Xiaomi Miot Auto 或 Xiaomi Home 官方集成接入。"
+                "添加后我会从设备列表里让你点选,不会要求你手输 entity_id。"
+            ),
+        }
+
+    return None
+
+
+def _looks_like_device_automation_request(text: str) -> bool:
+    normalized = text.lower()
+    device_keywords = (
+        "净化器",
+        "灯",
+        "空调",
+        "窗帘",
+        "扫地",
+        "插座",
+        "风扇",
+        "purifier",
+        "light",
+        "climate",
+        "vacuum",
+    )
+    return any(keyword in normalized for keyword in device_keywords)

@@ -72,8 +72,11 @@ def test_clarification_card_contract_is_present():
     assert 'class="cand-free-input"' in source
     assert 'class="cand-free-send"' in source
     assert '.cand-chip[data-label]' in source
+    assert 'data-id="${candidate.id || ""}"' in source
+    assert "_formatCandidateReply(label, clarification.dataset.id)" in source
+    assert 'return `${label} (${id})`;' in source
     assert "this._appendUserMessage(label);" in source
-    assert "this._sendChat(label);" in source
+    assert "this._sendChat(reply);" in source
     assert '.cand-free-send[data-card]' in source
     assert "this._sendChat(text);" in source
     assert 'if (event.key !== "Enter")' in source
