@@ -7,21 +7,25 @@ from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 
-from homeassistant.components import frontend, panel_custom
+from homeassistant.components import frontend, panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 
+from .agent.chat_session import ChatSessionError, run_single_turn
 from .const import (
     AUDIT_LOG_FILE,
     AUTOMATIONS_FILE,
+    ALL_MODES,
     CONF_API_KEY,
     CONF_BASE_URL,
     CONF_MODEL,
     CONF_PROVIDER_PRESET,
     CONF_TIMEOUT,
+    CONVERSATIONS_FILE,
     DEFAULT_TIMEOUT,
+    DEFAULT_MODE,
     DOMAIN,
     DRAFTS_FILE,
     FRONTEND_PANEL_JS,
@@ -39,6 +43,7 @@ from .const import (
     SERVICE_TEST_CONNECTION,
     STORAGE_DIR,
     UI_STATE_FILE,
+    WS_TYPE_CHAT,
 )
 from .providers.openai_compatible import OpenAICompatibleClient, ProviderError
 from .storage.audit_log import append_audit_event
@@ -106,6 +111,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
 
     _async_register_services(hass)
+    _async_register_ws_commands(hass)
     await _async_register_frontend(hass)
     return True
 
@@ -132,6 +138,7 @@ def _domain_data(hass: HomeAssistant) -> dict[str, Any]:
         {
             "entries": {},
             "services_registered": False,
+            "ws_registered": False,
             "panel_registered": False,
             "static_registered": False,
         },
@@ -226,6 +233,51 @@ def _async_remove_services(hass: HomeAssistant) -> None:
     ):
         hass.services.async_remove(DOMAIN, service)
     domain_data["services_registered"] = False
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_TYPE_CHAT,
+        vol.Required("conversation_id"): str,
+        vol.Required("user_message"): str,
+        vol.Optional("mode", default=DEFAULT_MODE): vol.In(ALL_MODES),
+    }
+)
+@websocket_api.async_response
+async def _async_handle_ws_chat(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    try:
+        provider = _get_provider_config(hass)
+        client = _build_provider_client(provider)
+        result = await run_single_turn(
+            conversations_path=_storage_path(hass, CONVERSATIONS_FILE),
+            ui_state_path=_storage_path(hass, UI_STATE_FILE),
+            presence_path=_storage_path(hass, PRESENCE_FILE),
+            conversation_id=msg["conversation_id"],
+            user_message=msg["user_message"],
+            mode=msg.get("mode", DEFAULT_MODE),
+            provider_client=client,
+            model_name=str(provider.get(CONF_MODEL, "")),
+        )
+    except ChatSessionError as err:
+        connection.send_error(msg["id"], "haclaw_chat_error", str(err))
+        return
+    except HomeAssistantError as err:
+        connection.send_error(msg["id"], "haclaw_config_error", str(err))
+        return
+    connection.send_result(msg["id"], result)
+
+
+def _async_register_ws_commands(hass: HomeAssistant) -> None:
+    domain_data = _domain_data(hass)
+    if domain_data.get("ws_registered", False):
+        return
+
+    websocket_api.async_register_command(hass, _async_handle_ws_chat)
+    domain_data["ws_registered"] = True
 
 
 async def _async_register_frontend(hass: HomeAssistant) -> None:

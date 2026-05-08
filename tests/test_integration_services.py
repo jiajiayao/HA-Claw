@@ -1,9 +1,10 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import yaml
+import voluptuous as vol
 from homeassistant.core import ServiceCall
 
 import custom_components.haclaw as haclaw
@@ -21,6 +22,7 @@ from custom_components.haclaw.const import (
     SERVICE_LIST_PRESENCE_CANDIDATES,
     SERVICE_SWITCH_MODEL,
     SERVICE_TEST_CONNECTION,
+    WS_TYPE_CHAT,
 )
 from custom_components.haclaw.providers.openai_compatible import ChatCompletionResult
 
@@ -123,6 +125,22 @@ class FakeHass:
 
     async def async_add_executor_job(self, func, *args):
         return func(*args)
+
+
+class FakeConnection:
+    def __init__(self):
+        self.results = []
+        self.errors = []
+        self.exceptions = []
+
+    def send_result(self, msg_id, result):
+        self.results.append((msg_id, result))
+
+    def send_error(self, msg_id, code, message):
+        self.errors.append((msg_id, code, message))
+
+    def async_handle_exception(self, msg, err):
+        self.exceptions.append((msg, err))
 
 
 class FakeClient:
@@ -341,6 +359,67 @@ class IntegrationServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(approve_response["success"])
             self.assertEqual(automations[0]["alias"], "晚上打开客厅灯")
             self.assertFalse(automations[0]["initial_state"])
+
+    def test_registers_ws_chat_command(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            hass = FakeHass(tmp_dir)
+
+            haclaw._async_register_ws_commands(hass)
+
+            self.assertIn(WS_TYPE_CHAT, hass.data["websocket_api"])
+
+    async def test_ws_chat_returns_final_response(self):
+        handler = getattr(haclaw, "_async_handle_ws_chat", None)
+        self.assertIsNotNone(handler)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            hass = FakeHass(tmp_dir)
+            connection = FakeConnection()
+            fake = {
+                "conversation_id": "c1",
+                "assistant_message": {"type": "final_response", "message": "hi"},
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                "model": "mimo",
+            }
+
+            with (
+                patch.object(haclaw, "_build_provider_client", return_value=FakeClient()),
+                patch.object(
+                    haclaw,
+                    "run_single_turn",
+                    new=AsyncMock(return_value=fake),
+                    create=True,
+                ) as run_turn,
+            ):
+                await handler.__wrapped__(
+                    hass,
+                    connection,
+                    {
+                        "id": 1,
+                        "type": WS_TYPE_CHAT,
+                        "conversation_id": "c1",
+                        "user_message": "hi",
+                        "mode": "automation",
+                    },
+                )
+
+            self.assertEqual(connection.errors, [])
+            self.assertEqual(connection.results, [(1, fake)])
+            run_turn.assert_awaited_once()
+
+    def test_ws_chat_schema_rejects_invalid_mode(self):
+        handler = getattr(haclaw, "_async_handle_ws_chat", None)
+        self.assertIsNotNone(handler)
+
+        with self.assertRaises(vol.Invalid):
+            handler._ws_schema(
+                {
+                    "id": 2,
+                    "type": WS_TYPE_CHAT,
+                    "conversation_id": "c1",
+                    "user_message": "hi",
+                    "mode": "garbage",
+                }
+            )
 
 
 if __name__ == "__main__":
