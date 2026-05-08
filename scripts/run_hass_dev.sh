@@ -11,6 +11,10 @@ if [[ ! -x "$VENV_DIR/bin/hass" ]]; then
 fi
 
 mkdir -p "$HA_CONFIG_DIR"
-ln -sfn "$ROOT_DIR/custom_components" "$HA_CONFIG_DIR/custom_components"
+if [[ -L "$HA_CONFIG_DIR/custom_components" ]]; then
+  rm "$HA_CONFIG_DIR/custom_components"
+fi
+mkdir -p "$HA_CONFIG_DIR/custom_components"
+ln -sfn "$ROOT_DIR/custom_components/haclaw" "$HA_CONFIG_DIR/custom_components/haclaw"
 
 exec "$VENV_DIR/bin/hass" -c "$HA_CONFIG_DIR" --debug
