@@ -192,6 +192,9 @@ class HAclawPanel extends HTMLElement {
     if (m.kind === "user_text") {
       return this._html`<div class="bubble user">${m.text}</div>`;
     }
+    if (m.kind === "env_check") {
+      return this._renderEnvCheckCard(m.payload);
+    }
     if (m.kind === "thinking") {
       return `<div class="bubble assistant thinking">思考中...</div>`;
     }
@@ -289,6 +292,39 @@ class HAclawPanel extends HTMLElement {
   _renderToolCallLine(payload) {
     const tool = payload.tool || "?";
     return this._html`<div class="tool-call-line">↪ 模型尝试调用 <code>${tool}</code>(本阶段不执行)</div>`;
+  }
+
+  _renderEnvCheckCard(state) {
+    const items = [...(state.items || []), ...(state.advanced || [])];
+    const rowsHTML = items
+      .map((item) => {
+        const linksHTML = (item.links || [])
+          .map((link) => this._html`<a href="${link.url}" target="_blank">${link.text}</a>`)
+          .join(" · ");
+        const installBtn = item.install_prompt
+          ? this._html`<button class="btn-install-prompt" data-domain="${item.id}">📋 安装指令</button>`
+          : "";
+        const hint =
+          !item.ok && item.hint
+            ? this._html`<span class="env-hint">${item.hint}</span>`
+            : "";
+        return `<div class="env-row ${item.ok ? "ok" : "fail"}">
+          <span class="env-status">${item.ok ? "✅" : "⚠️"}</span>
+          <span class="env-label">${this._escape(item.label || "")}</span>
+          ${hint}
+          <span class="env-actions">${linksHTML} ${installBtn}</span>
+        </div>`;
+      })
+      .join("");
+
+    return `<div class="card env-check">
+      <div class="env-head">🛠 首次设置 · 我建议先检查这些</div>
+      ${rowsHTML}
+      <div class="env-foot">
+        <button class="btn-secondary" data-action="env-dismiss">全部跳过,以后再说</button>
+        <button class="btn-secondary" data-action="env-recheck">重新检查</button>
+      </div>
+    </div>`;
   }
 
   _renderDraftCard(payload) {
@@ -431,8 +467,74 @@ class HAclawPanel extends HTMLElement {
     setTimeout(() => toast.remove(), 2500);
   }
 
+  _dismissEnv() {
+    try {
+      localStorage.setItem("haclaw.env_dismissed", "1");
+    } catch (_err) {
+      // Ignore storage failures in embedded HA contexts.
+    }
+    this._messages = this._messages.filter((message) => message.kind !== "env_check");
+    this._render();
+  }
+
   _openInstallModal(domain) {
-    this._toast(`安装指令将在环境检查卡片中打开: ${domain || "未知集成"}`);
+    const items = [
+      ...(this._envState?.items || []),
+      ...(this._envState?.advanced || []),
+    ];
+    let prompt = items.find((item) => item.id === domain)?.install_prompt || null;
+    if (!prompt) {
+      prompt = this._findDraftMissingPrompt(domain);
+    }
+    if (!prompt) {
+      return;
+    }
+
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal">
+        <div class="modal-head">
+          <span>${this._escape(`安装指令 — ${prompt.title || ""}`)}</span>
+          <button class="modal-close">✕</button>
+        </div>
+        <div class="modal-info">粘贴到 Claude Code / Codex / 其他 AI agent。⚠️ 黄底字段是占位符,在你的 AI agent 那边亲自填,不要在这里改。</div>
+        <textarea class="modal-body" readonly></textarea>
+        <div class="modal-foot">
+          <button class="btn-primary modal-copy">📋 复制</button>
+          <button class="btn-secondary modal-close">关闭</button>
+        </div>
+      </div>
+    `;
+    overlay.querySelector(".modal-body").value = prompt.body || "";
+    document.body.appendChild(overlay);
+
+    overlay.querySelectorAll(".modal-close").forEach((button) => {
+      button.addEventListener("click", () => overlay.remove());
+    });
+    overlay.querySelector(".modal-copy")?.addEventListener("click", async () => {
+      const text = overlay.querySelector(".modal-body").value;
+      try {
+        await navigator.clipboard.writeText(text);
+        this._toast("已复制 · 粘贴到你的 AI agent · 黄底占位符在那边亲自填");
+      } catch (_err) {
+        this._toast("复制失败,请手动复制");
+      }
+    });
+  }
+
+  _findDraftMissingPrompt(domain) {
+    for (const message of this._messages) {
+      if (message.kind !== "assistant_msg") {
+        continue;
+      }
+      const missing = message.payload?.missing_integrations || [];
+      const found = missing.find((item) => item.domain === domain);
+      if (found?.install_prompt) {
+        return found.install_prompt;
+      }
+    }
+    return null;
   }
 
   _render() {
@@ -568,6 +670,21 @@ class HAclawPanel extends HTMLElement {
     });
     this.querySelectorAll(".btn-install-prompt[data-domain]").forEach((el) => {
       el.addEventListener("click", () => this._openInstallModal(el.dataset.domain));
+    });
+    this.querySelectorAll("[data-action='env-dismiss']").forEach((el) => {
+      el.addEventListener("click", () => this._dismissEnv());
+    });
+    this.querySelectorAll("[data-action='env-recheck']").forEach((el) => {
+      el.addEventListener("click", () => {
+        this._envCardShown = false;
+        this._messages = this._messages.filter((message) => message.kind !== "env_check");
+        try {
+          localStorage.removeItem("haclaw.env_dismissed");
+        } catch (_err) {
+          // Ignore storage failures in embedded HA contexts.
+        }
+        this._refreshState();
+      });
     });
     this.querySelector("#send-btn")?.addEventListener("click", () => this._onSend());
     this.querySelector("#chat-input")?.addEventListener("keydown", (event) => {
@@ -1033,7 +1150,118 @@ class HAclawPanel extends HTMLElement {
         padding: 1px 4px;
       }
 
+      .card.env-check .env-head {
+        font-weight: 700;
+        margin-bottom: 8px;
+      }
+
+      .env-row {
+        align-items: center;
+        border-bottom: 1px solid var(--divider-color);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 6px 0;
+      }
+
+      .env-row:last-child {
+        border-bottom: 0;
+      }
+
+      .env-row .env-label {
+        font-weight: 600;
+      }
+
+      .env-row .env-hint {
+        color: var(--secondary-text-color);
+        font-size: 12px;
+      }
+
+      .env-row .env-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-left: auto;
+      }
+
+      .env-foot {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        margin-top: 12px;
+      }
+
+      .modal-overlay {
+        align-items: center;
+        background: rgba(0, 0, 0, 0.5);
+        display: flex;
+        inset: 0;
+        justify-content: center;
+        position: fixed;
+        z-index: 2000;
+      }
+
+      .modal {
+        background: var(--card-background-color);
+        border-radius: 12px;
+        color: var(--primary-text-color);
+        display: flex;
+        flex-direction: column;
+        max-height: 86vh;
+        max-width: 700px;
+        width: 92%;
+      }
+
+      .modal-head {
+        align-items: center;
+        border-bottom: 1px solid var(--divider-color);
+        display: flex;
+        font-weight: 700;
+        justify-content: space-between;
+        padding: 12px 16px;
+      }
+
+      .modal-close {
+        background: transparent;
+        border: 0;
+        color: var(--primary-text-color);
+        cursor: pointer;
+        font-size: 18px;
+      }
+
+      .modal-info {
+        background: rgba(33, 150, 243, 0.1);
+        color: #1976d2;
+        font-size: 12px;
+        padding: 8px 16px;
+      }
+
+      .modal-body {
+        background: rgba(0, 0, 0, 0.03);
+        border: 0;
+        color: var(--primary-text-color);
+        flex: 1;
+        font-family: ui-monospace, monospace;
+        font-size: 12px;
+        min-height: 240px;
+        padding: 12px;
+        resize: vertical;
+      }
+
+      .modal-foot {
+        border-top: 1px solid var(--divider-color);
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        padding: 12px 16px;
+      }
+
       @media (max-width: 640px) {
+        .modal {
+          max-height: 92vh;
+          width: 96%;
+        }
+
         .topbar .right .icon-btn:nth-child(3) {
           display: none;
         }

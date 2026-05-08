@@ -122,3 +122,27 @@ def test_risk_and_tool_call_rendering_contract_is_present():
     assert "tool-call-line" in source
     assert ".card.risk" in source
     assert ".tool-call-line" in source
+
+
+def test_env_check_card_and_install_modal_contract_is_present():
+    source = PANEL_JS.read_text(encoding="utf-8")
+
+    assert 'if (m.kind === "env_check")' in source
+    assert "_renderEnvCheckCard(m.payload)" in source
+    assert "state.advanced" in source
+    assert 'class="card env-check"' in source
+    assert "首次设置" in source
+    assert "env-dismiss" in source
+    assert "env-recheck" in source
+    assert "async _refreshState()" in source
+    assert "_dismissEnv()" in source
+    assert 'localStorage.setItem("haclaw.env_dismissed", "1")' in source
+    assert "_openInstallModal(domain)" in source
+    assert "_findDraftMissingPrompt(domain)" in source
+    assert 'textarea class="modal-body" readonly' in source
+    assert 'overlay.querySelector(".modal-body").value = prompt.body || "";' in source
+    assert "navigator.clipboard.writeText(text)" in source
+    assert "黄底字段是占位符" in source
+    assert ".card.env-check .env-head" in source
+    assert ".modal-overlay" in source
+    assert ".modal-body" in source
