@@ -73,6 +73,25 @@ class OpenAICompatibleClientTests(unittest.TestCase):
         self.assertEqual(result.content, "你好")
         self.assertEqual(result.usage["total_tokens"], 20)
 
+    def test_allows_empty_content_for_provider_connection_test(self):
+        result = extract_chat_completion_result(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "reasoning_content": "Thinking before final output.",
+                        }
+                    }
+                ],
+                "usage": {"total_tokens": 20},
+            },
+            allow_empty_response=True,
+        )
+
+        self.assertEqual(result.content, "Thinking before final output.")
+        self.assertEqual(result.usage["total_tokens"], 20)
+
 
 if __name__ == "__main__":
     unittest.main()

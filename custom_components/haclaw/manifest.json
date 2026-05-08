@@ -1,11 +1,13 @@
 {
   "domain": "haclaw",
   "name": "HAclaw",
+  "after_dependencies": ["panel_custom"],
   "codeowners": [],
   "config_flow": true,
+  "dependencies": ["http"],
   "documentation": "https://github.com/jiajia/HA-Claw",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/jiajia/HA-Claw/issues",
   "requirements": [],
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

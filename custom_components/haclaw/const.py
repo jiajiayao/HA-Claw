@@ -4,6 +4,19 @@ from __future__ import annotations
 
 DOMAIN = "haclaw"
 
+SERVICE_TEST_CONNECTION = "test_connection"
+SERVICE_CREATE_AUTOMATION_DRAFT = "create_automation_draft"
+SERVICE_APPROVE_AUTOMATION_DRAFT = "approve_automation_draft"
+
+FRONTEND_URL_PATH = DOMAIN
+FRONTEND_STATIC_URL = "/haclaw_static"
+FRONTEND_PANEL_JS = "haclaw-panel.js"
+
+STORAGE_DIR = "haclaw"
+DRAFTS_FILE = "drafts.json"
+AUTOMATIONS_FILE = "automations.yaml"
+AUDIT_LOG_FILE = "audit_log.jsonl"
+
 CONF_PROVIDER_PRESET = "provider_preset"
 CONF_API_KEY = "api_key"
 CONF_BASE_URL = "base_url"

@@ -119,6 +119,7 @@ class OpenAICompatibleClient:
                 "运行 HAclaw 需要 aiohttp；Home Assistant 环境通常已内置。",
             ) from err
 
+        allow_empty_response = bool(kwargs.pop("allow_empty_response", False))
         payload = self.build_payload(messages, **kwargs)
         timeout = aiohttp.ClientTimeout(total=self.timeout)
 
@@ -143,20 +144,38 @@ class OpenAICompatibleClient:
         except aiohttp.ClientError as err:
             raise ProviderError("cannot_connect", "无法连接到 Provider Base URL。") from err
 
-        return extract_chat_completion_result(response_data)
+        return extract_chat_completion_result(
+            response_data,
+            allow_empty_response=allow_empty_response,
+        )
 
 
-def extract_chat_completion_result(response_data: dict[str, Any]) -> ChatCompletionResult:
+def extract_chat_completion_result(
+    response_data: dict[str, Any],
+    *,
+    allow_empty_response: bool = False,
+) -> ChatCompletionResult:
     """Extract assistant content and optional usage from a chat response."""
     try:
-        content = response_data["choices"][0]["message"]["content"]
+        message = response_data["choices"][0]["message"]
+        content = message["content"]
     except (KeyError, IndexError, TypeError) as err:
         raise ProviderError("invalid_response", "Provider 返回格式无法解析。") from err
 
-    if not isinstance(content, str) or not content.strip():
-        raise ProviderError("empty_response", "Provider 返回了空内容。")
+    if not isinstance(content, str):
+        raise ProviderError("invalid_response", "Provider 返回格式无法解析。")
 
     usage = response_data.get("usage")
+    if not content.strip() and allow_empty_response:
+        reasoning_content = message.get("reasoning_content")
+        if isinstance(reasoning_content, str) and reasoning_content.strip():
+            content = reasoning_content
+        elif isinstance(usage, dict):
+            content = ""
+
+    if not content.strip() and not allow_empty_response:
+        raise ProviderError("empty_response", "Provider 返回了空内容。")
+
     return ChatCompletionResult(
         content=content,
         usage=usage if isinstance(usage, dict) else {},

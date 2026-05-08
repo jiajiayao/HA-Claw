@@ -124,9 +124,10 @@ async def _async_validate_provider(data: dict[str, Any]) -> None:
         timeout=min(data[CONF_TIMEOUT], 30),
     )
     await client.chat(
-        [{"role": "user", "content": "ping"}],
+        [{"role": "user", "content": "请直接输出：pong"}],
         temperature=0,
-        max_tokens=1,
+        max_tokens=128,
+        allow_empty_response=True,
     )
 
 

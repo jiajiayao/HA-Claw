@@ -1,3 +1,57 @@
 test_connection:
   name: Test provider connection
   description: Test the configured OpenAI-compatible provider without exposing secrets.
+  fields:
+    entry_id:
+      name: Config entry id
+      description: Optional HAclaw config entry id. If omitted, the first configured entry is used.
+      required: false
+      selector:
+        text:
+
+create_automation_draft:
+  name: Create automation draft
+  description: Validate and save an automation draft in HAclaw managed storage without enabling it.
+  fields:
+    title:
+      name: Title
+      description: Human-readable draft title.
+      required: true
+      selector:
+        text:
+    description:
+      name: Description
+      description: Optional draft description shown to the user before approval.
+      required: false
+      selector:
+        text:
+    automation:
+      name: Automation
+      description: Home Assistant automation object to validate and save as a draft.
+      required: true
+      selector:
+        object:
+    source:
+      name: Source
+      description: Origin of the draft, such as service, panel, or agent.
+      required: false
+      selector:
+        text:
+
+approve_automation_draft:
+  name: Approve automation draft
+  description: Write an approved automation draft to HAclaw managed automations.yaml, disabled by default.
+  fields:
+    draft_id:
+      name: Draft id
+      description: Draft id returned by create_automation_draft.
+      required: true
+      selector:
+        text:
+    confirmed:
+      name: Confirm risky draft
+      description: Required when the draft contains a service that needs explicit confirmation.
+      required: false
+      default: false
+      selector:
+        boolean:
