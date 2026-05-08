@@ -1570,8 +1570,16 @@ class HAclawPanel extends HTMLElement {
           max-width: 100%;
         }
 
+        .topbar .left {
+          font-size: 13px;
+        }
+
         .topbar .right .icon-btn:nth-child(3) {
           display: none;
+        }
+
+        .empty h2 {
+          font-size: 22px;
         }
 
         .empty .chips {
@@ -1585,6 +1593,22 @@ class HAclawPanel extends HTMLElement {
         .mode-chip {
           flex: 1;
           min-width: 80px;
+        }
+
+        .draft-actions {
+          flex-wrap: wrap;
+        }
+
+        .bubble {
+          max-width: 90%;
+        }
+
+        .cand-chips {
+          flex-direction: column;
+        }
+
+        .cand-chip {
+          width: 100%;
         }
       }
     `;

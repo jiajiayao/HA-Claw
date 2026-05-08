@@ -207,3 +207,26 @@ def test_settings_modal_and_history_drawer_contract_is_present():
     assert ".modal-section" in source
     assert ".modal.drawer-panel" in source
     assert ".drawer-row" in source
+
+
+def test_mobile_breakpoint_contract_is_present():
+    source = PANEL_JS.read_text(encoding="utf-8")
+
+    assert source.count("@media (max-width: 640px)") == 1
+    mobile = source.split("@media (max-width: 640px)", maxsplit=1)[1]
+    assert ".topbar .left" in mobile
+    assert "font-size: 13px" in mobile
+    assert ".empty h2" in mobile
+    assert "font-size: 22px" in mobile
+    assert ".empty .chips" in mobile
+    assert "flex-direction: column" in mobile
+    assert ".modes" in mobile
+    assert "flex-wrap: wrap" in mobile
+    assert ".draft-actions" in mobile
+    assert ".bubble" in mobile
+    assert "max-width: 90%" in mobile
+    assert ".cand-chips" in mobile
+    assert ".cand-chip" in mobile
+    assert "width: 100%" in mobile
+    assert ".modal.drawer-panel" in mobile
+    assert "max-width: 100%" in mobile
