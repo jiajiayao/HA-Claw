@@ -19,6 +19,7 @@ from custom_components.haclaw.const import (
     SERVICE_GET_ENVIRONMENT_READINESS,
     SERVICE_GET_PRESENCE_BINDING,
     SERVICE_LIST_PRESENCE_CANDIDATES,
+    SERVICE_SWITCH_MODEL,
     SERVICE_TEST_CONNECTION,
 )
 from custom_components.haclaw.providers.openai_compatible import ChatCompletionResult
@@ -66,6 +67,12 @@ class FakeServices:
 
     def async_remove(self, domain, service):
         self.registered.pop((domain, service), None)
+
+
+class FakeEntry:
+    def __init__(self, data=None, options=None):
+        self.data = dict(data or {})
+        self.options = dict(options or {})
 
 
 class FakeConfigEntries:
@@ -237,6 +244,41 @@ class IntegrationServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ids, ["provider", "device_tracker", "xiaomi_miot"])
             advanced_ids = [item["id"] for item in response["advanced"]]
             self.assertIn("hacs", advanced_ids)
+
+    def test_registers_switch_model_service(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            hass = FakeHass(tmp_dir)
+            haclaw._async_register_services(hass)
+            self.assertIn(
+                (DOMAIN, SERVICE_SWITCH_MODEL),
+                hass.services.registered,
+            )
+
+    async def test_switch_model_updates_entry_options(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            entry = FakeEntry(
+                data={CONF_MODEL: "old"}, options={CONF_MODEL: "old"},
+            )
+            hass = FakeHass(tmp_dir, entry=entry)
+            call = ServiceCall(
+                hass, DOMAIN, SERVICE_SWITCH_MODEL,
+                {"model": "deepseek-coder"},
+            )
+            response = await haclaw._async_handle_switch_model(call)
+            self.assertTrue(response["success"])
+            self.assertEqual(entry.options[CONF_MODEL], "deepseek-coder")
+
+    async def test_switch_model_rejects_empty(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            entry = FakeEntry(
+                data={CONF_MODEL: "old"}, options={CONF_MODEL: "old"},
+            )
+            hass = FakeHass(tmp_dir, entry=entry)
+            call = ServiceCall(
+                hass, DOMAIN, SERVICE_SWITCH_MODEL, {"model": "  "},
+            )
+            response = await haclaw._async_handle_switch_model(call)
+            self.assertFalse(response["success"])
 
     async def test_test_connection_returns_usage_without_secret(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

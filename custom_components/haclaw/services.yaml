@@ -81,3 +81,14 @@ get_environment_readiness:
   name: Get environment readiness
   description: Detect HACS / Xiaomi / device_tracker readiness for HAclaw onboarding.
   fields: {}
+
+switch_model:
+  name: Switch model
+  description: Update only the model field on the HAclaw config entry options.
+  fields:
+    model:
+      name: Model
+      description: New model identifier.
+      required: true
+      selector:
+        text:

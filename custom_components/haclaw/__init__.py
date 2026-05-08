@@ -35,6 +35,7 @@ from .const import (
     SERVICE_GET_ENVIRONMENT_READINESS,
     SERVICE_GET_PRESENCE_BINDING,
     SERVICE_LIST_PRESENCE_CANDIDATES,
+    SERVICE_SWITCH_MODEL,
     SERVICE_TEST_CONNECTION,
     STORAGE_DIR,
     UI_STATE_FILE,
@@ -92,6 +93,7 @@ LIST_PRESENCE_CANDIDATES_SCHEMA = vol.Schema({})
 GET_PRESENCE_BINDING_SCHEMA = vol.Schema({})
 BIND_PRESENCE_ENTITY_SCHEMA = vol.Schema({vol.Required("entity_id"): cv.string})
 GET_ENVIRONMENT_READINESS_SCHEMA = vol.Schema({})
+SWITCH_MODEL_SCHEMA = vol.Schema({vol.Required("model"): cv.string})
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -197,6 +199,13 @@ def _async_register_services(hass: HomeAssistant) -> None:
         schema=GET_ENVIRONMENT_READINESS_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
     )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SWITCH_MODEL,
+        _async_handle_switch_model,
+        schema=SWITCH_MODEL_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
     domain_data["services_registered"] = True
 
 
@@ -213,6 +222,7 @@ def _async_remove_services(hass: HomeAssistant) -> None:
         SERVICE_GET_PRESENCE_BINDING,
         SERVICE_BIND_PRESENCE_ENTITY,
         SERVICE_GET_ENVIRONMENT_READINESS,
+        SERVICE_SWITCH_MODEL,
     ):
         hass.services.async_remove(DOMAIN, service)
     domain_data["services_registered"] = False
@@ -489,6 +499,28 @@ async def _async_handle_get_environment_readiness(call: ServiceCall) -> dict[str
             provider_ok=provider_ok,
         )
     )
+
+
+async def _async_handle_switch_model(call: ServiceCall) -> dict[str, Any]:
+    hass = call.hass
+    new_model = call.data["model"].strip()
+    if not new_model:
+        return {"success": False, "message": "model 不能为空"}
+
+    entries = _domain_data(hass)["entries"]
+    if not entries:
+        return {"success": False, "message": "尚未配置 HAclaw entry"}
+    entry_state = next(iter(entries.values()))
+    entry = entry_state.get("entry")
+    if entry is None:
+        return {"success": False, "message": "尚未配置 HAclaw entry"}
+
+    new_options = dict(entry.options)
+    new_options[CONF_MODEL] = new_model
+    hass.config_entries.async_update_entry(entry, options=new_options)
+    entry_state["provider"] = {**dict(entry.data), **new_options}
+
+    return {"success": True, "model": new_model}
 
 
 def _get_provider_config(
