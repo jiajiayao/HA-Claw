@@ -206,11 +206,56 @@ class HAclawPanel extends HTMLElement {
 
   _renderAssistant(payload) {
     if (payload?.type === "final_response") {
-      const text = payload.message || "";
-      const display = text.replace(/^\[BIND_PRESENCE\]\s*/, "");
-      return this._html`<div class="bubble assistant">${display}</div>`;
+      return this._renderFinalResponseBubble(payload);
+    }
+    if (payload?.type === "clarification") {
+      return this._renderClarificationCard(payload);
     }
     return this._html`<div class="bubble assistant">${JSON.stringify(payload)}</div>`;
+  }
+
+  _renderFinalResponseBubble(payload) {
+    const text = payload.message || "";
+    const display = text.replace(/^\[BIND_PRESENCE\]\s*/, "");
+    return this._html`<div class="bubble assistant">${display}</div>`;
+  }
+
+  _renderClarificationCard(payload) {
+    const cands = Array.isArray(payload.candidates) ? payload.candidates : [];
+    const allowFree = Boolean(payload.allow_free_text);
+    const placeholder = payload.free_text_placeholder || "或者直接输入...";
+    const cardId = `clar_${this._messages.length}`;
+
+    const chipsHTML = cands
+      .map((candidate) =>
+        this._html`<button class="cand-chip" data-card="${cardId}" data-label="${candidate.label || ""}">
+          <span class="cand-label">${candidate.label || ""}</span>
+          ${
+            candidate.subtitle
+              ? this._html`<span class="cand-sub">${candidate.subtitle}</span>`
+              : ""
+          }
+        </button>`,
+      )
+      .join("");
+
+    const freeHTML = allowFree
+      ? this._html`
+        <div class="cand-free">
+          <span class="cand-free-hint">或者自定义:</span>
+          <div class="cand-free-row">
+            <input type="text" class="cand-free-input" data-card="${cardId}" placeholder="${placeholder}" />
+            <button class="cand-free-send" data-card="${cardId}">发送</button>
+          </div>
+        </div>
+      `
+      : "";
+
+    return `<div class="card clarification" data-card-id="${this._escape(cardId)}">
+      <div class="card-msg">${this._escape(payload.message || "")}</div>
+      <div class="cand-chips">${chipsHTML}</div>
+      ${freeHTML}
+    </div>`;
   }
 
   _render() {
@@ -292,6 +337,33 @@ class HAclawPanel extends HTMLElement {
     });
     this.querySelectorAll(".mode-chip[data-mode]").forEach((el) => {
       el.addEventListener("click", () => this._switchMode(el.dataset.mode));
+    });
+    this.querySelectorAll(".cand-chip[data-label]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const label = el.dataset.label;
+        this._appendUserMessage(label);
+        this._sendChat(label);
+      });
+    });
+    this.querySelectorAll(".cand-free-send[data-card]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const card = el.dataset.card;
+        const input = this.querySelector(`.cand-free-input[data-card="${card}"]`);
+        const text = input?.value.trim();
+        if (!text) {
+          return;
+        }
+        input.value = "";
+        this._appendUserMessage(text);
+        this._sendChat(text);
+      });
+    });
+    this.querySelectorAll(".cand-free-input[data-card]").forEach((el) => {
+      el.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          this.querySelector(`.cand-free-send[data-card="${el.dataset.card}"]`)?.click();
+        }
+      });
     });
     this.querySelector("#send-btn")?.addEventListener("click", () => this._onSend());
     this.querySelector("#chat-input")?.addEventListener("keydown", (event) => {
@@ -475,6 +547,90 @@ class HAclawPanel extends HTMLElement {
         align-self: flex-start;
         background: rgba(255, 193, 7, 0.15);
         border: 1px solid #b88d00;
+      }
+
+      .card {
+        align-self: flex-start;
+        background: var(--card-background-color);
+        border: 1px solid var(--divider-color);
+        border-radius: 12px;
+        max-width: 90%;
+        padding: 12px;
+      }
+
+      .card-msg {
+        font-weight: 600;
+        margin-bottom: 12px;
+      }
+
+      .cand-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .cand-chip {
+        align-items: flex-start;
+        background: var(--card-background-color);
+        border: 1px solid var(--divider-color);
+        border-radius: 10px;
+        color: var(--primary-text-color);
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        min-height: 44px;
+        min-width: 120px;
+        padding: 10px 14px;
+      }
+
+      .cand-chip:hover {
+        background: var(--secondary-background-color);
+      }
+
+      .cand-label {
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      .cand-sub {
+        color: var(--secondary-text-color);
+        font-size: 11px;
+        margin-top: 2px;
+      }
+
+      .cand-free {
+        margin-top: 12px;
+      }
+
+      .cand-free-hint {
+        color: var(--secondary-text-color);
+        font-size: 12px;
+      }
+
+      .cand-free-row {
+        display: flex;
+        gap: 8px;
+        margin-top: 6px;
+      }
+
+      .cand-free-input {
+        background: var(--card-background-color);
+        border: 1px solid var(--divider-color);
+        border-radius: 6px;
+        color: var(--primary-text-color);
+        flex: 1;
+        min-height: 40px;
+        padding: 10px;
+      }
+
+      .cand-free-send {
+        background: var(--primary-color);
+        border: 0;
+        border-radius: 6px;
+        color: var(--text-primary-color);
+        cursor: pointer;
+        min-height: 40px;
+        padding: 10px 16px;
       }
 
       @media (max-width: 640px) {

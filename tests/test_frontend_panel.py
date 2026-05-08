@@ -58,3 +58,25 @@ def test_chat_ws_final_response_contract_is_present():
     assert 'text.replace(/^\\[BIND_PRESENCE\\]\\s*/, "")' in source
     assert ".bubble.thinking" in source
     assert ".bubble.error" in source
+
+
+def test_clarification_card_contract_is_present():
+    source = PANEL_JS.read_text(encoding="utf-8")
+
+    assert 'if (payload?.type === "clarification")' in source
+    assert "_renderClarificationCard(payload)" in source
+    assert "payload.allow_free_text" in source
+    assert 'payload.free_text_placeholder || "或者直接输入..."' in source
+    assert 'class="card clarification"' in source
+    assert 'class="cand-chip"' in source
+    assert 'class="cand-free-input"' in source
+    assert 'class="cand-free-send"' in source
+    assert '.cand-chip[data-label]' in source
+    assert "this._appendUserMessage(label);" in source
+    assert "this._sendChat(label);" in source
+    assert '.cand-free-send[data-card]' in source
+    assert "this._sendChat(text);" in source
+    assert 'if (event.key === "Enter")' in source
+    assert ".card {" in source
+    assert ".cand-chips" in source
+    assert ".cand-free-row" in source
