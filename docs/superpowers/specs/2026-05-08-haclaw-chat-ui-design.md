@@ -31,7 +31,7 @@
 ### 2.2 非目标(本 spec 不做,延后到 C 或更后)
 
 - **真正执行模型提议的工具调用**(如 `turn_on_light`):本期 `tool_call` 仅以"灰色一行"显示,不执行;**执行模式 B 阶段也不真执行**,仅以"⚠️ 实验中"标签 + 一次性弹窗说明占位
-- **完整 Agent 多轮迭代循环**(`max_iterations`):本期一来一回,模型一次回复直接结束
+- **完整 Agent 多轮迭代循环**(`max_iterations` 含 tool→observation→tool→...):本期一次用户消息只触发一次模型调用,模型不能在自己回复内拿工具结果再回复;**注意**:这跟 §18 的"asking-answer 多轮"不冲突 — asking-answer 是跨用户消息的对话,每轮仍是"一来一回"
 - **完整安全层 / 服务白名单 / 风险等级计算**:本期 `risk_confirmation` 类型仅在前端渲染卡片,确认按钮先不真正执行(因为没有工具执行层)
 - **完整审计日志查询页**:本期审计日志仍由现有 `append_audit_event` 写入,前端不展示
 - **流式响应**:本期等模型完整回复后再渲染(JSON 协议下流式收益不大)
@@ -178,8 +178,8 @@ flowchart LR
 | JSON type | 组件 | 关键交互 |
 |-----------|------|---------|
 | `final_response` | 文字气泡 | 纯展示;支持基础 markdown(粗体/列表/代码块) |
-| `clarification` | 候选 chip 卡 | 多个候选实体作为可点 chip;chip 文案 = `friendly_name`(后跟 `entity_id` 的灰字次行);点击 = 把固定字符串 `"选择 <entity_id>"` 作为下一条用户消息发送(便于模型识别) |
-| `automation_draft` | 草稿折叠卡 | 默认折叠仅显示标题 + 风险标签;展开看 YAML;按钮组取决于 `requires_confirmation`:为 `true` 时显示 `[审批并确认风险]`(调用 `approve_automation_draft` 并传 `confirmed: true`),为 `false` 时显示 `[审批写入]`;另有 `[丢弃]` 和 `[修改后再说]`(把草稿 YAML 复制到输入框);如果 `missing_integrations` 非空,多渲染一行警告且 `审批*` 按钮禁用直到忽略警告或重新检查通过 |
+| `clarification` | 候选 chip 卡(**chip 优先,文字输入是 fallback**) | schema 见 §7.6;每个 candidate 渲染为大 chip(`label` 为主文,可选 `subtitle` 灰字次行);点击 = 把 `label` 作为下一条用户消息发送(明文,模型读得懂);只有当 `allow_free_text=true` 时下方才出现"或直接输入..."灰字提示(默认隐藏);多个 chip 横排或网格,优先用最大可点面积 |
+| `automation_draft` | 草稿折叠卡 | 默认折叠仅显示标题 + 风险标签;展开看 YAML + **设计依据 `rationale` 区**(从对话推演的实体/触发/条件/动作);按钮组取决于 `requires_confirmation`:为 `true` 时显示 `[审批并确认风险]`(调用 `approve_automation_draft` 并传 `confirmed: true`),为 `false` 时显示 `[审批写入]`;另有 `[丢弃]` 和 `[修改后再说]`(把草稿 YAML 复制到输入框);如果 `missing_integrations` 非空,多渲染一行警告且 `审批*` 按钮禁用直到忽略警告或重新检查通过 |
 | `risk_confirmation` | 风险卡(红边框) | 高对比红色背景,显示风险描述 + 计划动作;按钮 `[确认执行]`(本期禁用 + 提示"工具执行层未上线,留作展示")`[取消]` |
 | `tool_call`(模型尝试调工具) | 灰色单行 | `↪ 模型尝试调用 get_entity_state(本阶段不执行)`,折叠不展开 |
 | (前端注入)`environment_check` | 环境就绪卡(可折叠) | §8 详述 |
@@ -277,10 +277,44 @@ flowchart LR
 ```
 # MODE_SUFFIX_AUTOMATION
 当前模式:⚡ 自动化模式。
-- 优先返回 automation_draft 推进用户想做的自动化
-- 允许 final_response(解释/澄清)和 clarification(实体多义)
-- **不要返回 tool_call** — 本期没有工具执行能力,模型提议工具调用对用户无价值
-- 生成草稿前要确保实体 ID、服务名都是真实存在的;不确定时先用 clarification 问用户
+
+【核心原则:先问清楚,再生成】
+你的目标是生成对用户**真正实用**的自动化,不是匆忙生成一份模糊草稿。
+不要直接返回 automation_draft,除非以下维度都已经从对话里明确(包括用户本轮输入和之前轮次的回答):
+
+  1. 实体: 哪个 entity_id(必须真实存在于 hass.states,不要编造)
+  2. 触发: 类型(time / state / numeric_state / 存在感应 / 设备事件)+ 精确参数(具体小时/分钟、状态值、数值阈值)
+  3. 条件: 是否需要附加 condition(只在工作日?只在用户在家时?只在天黑后?— 用户没说默认就是没有,不要自作主张加上)
+  4. 动作参数: 灯亮度、空调温度、扫地机房间等(用户没说就用 HA 默认)
+  5. 边缘情况: 设备离线?多次触发要不要去重?— 这一项可在 rationale 里说"未问及,默认 X"
+
+【提问规则:chip 优先,避免让用户输入文字】
+- 缺信息时优先用 clarification 类型问,**不用 final_response 抛开放问题让用户打字**
+- clarification 的 candidates 必须 2–6 项,涵盖最常见的几种回答 + 必要时加一个 id="custom" label="其他" chip
+- 一次只问一个最关键的维度(单 clarification 一个 message),不要把多个问题挤进一个 message
+- 用户答了一轮 → 下一轮继续问下一个维度,直到所有关键维度明确
+- **最多 4 轮 clarification**,4 轮后即使有些维度仍模糊,也用合理默认值生成 draft + 在 rationale 里标注"假设了 X(用户未明确)"
+- 如果某个维度本质上是开放问题(如自定义触发时间),clarification 可加 `allow_free_text: true`,但仍**先给 3-4 个常见预设 chip**
+
+【生成 draft 之前的最后一步】
+信息够了时,先返回 final_response 给一句简明摘要(< 60 字),
+让用户校对一遍:"我理解你想要 X 实体在 Y 触发时执行 Z 动作 — 我开始生成草稿了"。
+如果用户回"嗯"/"是"/"对"/"OK"/"开始吧"等正面词,下一轮再返回 automation_draft。
+如果用户提出修正,继续 clarification 或 final_response 调整。
+
+【automation_draft 必须包含 rationale 字段】
+不要省略 rationale。每个字段记录"这条设计依据来自用户哪一轮的回答":
+- entities: 用户在哪一轮选了哪个候选
+- trigger: 用户怎么描述触发,你怎么映射到 HA trigger 类型
+- conditions: 用户明确要求或不要求 condition
+- actions: 用户明确指定或采用默认
+- edge_cases: 已问 / 未问 / 默认假设的细节
+
+【绝不要做的事】
+- 不要直接生成包含编造实体 ID 的草稿(任何不在 hass.states 的 entity_id 都不行)
+- 不要假设默认值不告知用户(比如默认全天 vs 仅工作日 — 必须问或在 rationale 标注)
+- 不要一次问 5 个以上问题,会劝退
+- 不要返回 tool_call(本期没工具执行能力)
 ```
 
 ```
@@ -317,6 +351,89 @@ ALLOWED_TYPES_BY_MODE = {
 - 若 `assistant_message["type"]` 不在当前模式允许集合中 → 视同协议失败,走 §7.2 步骤 5 的 system message 重试一次
 - 重试仍越界 → 返回 `error` 给前端,审计日志写 `result: "mode_violation"`,**不写入 conversations.json 的 assistant 部分**
 - 这样保证模式约束既来自 prompt(模型可读),也来自代码(模型不可绕过)
+
+### 7.6 `clarification` 类型 schema(扩展为通用 multiple choice)
+
+**schema**:
+
+```json
+{
+  "type": "clarification",
+  "message": "你说的是哪台净化器?",
+  "candidates": [
+    {"id": "fan.mi_air_purifier_living", "label": "客厅净化器",
+     "subtitle": "fan.mi_air_purifier_living · on"},
+    {"id": "fan.mi_air_purifier_bedroom", "label": "卧室净化器",
+     "subtitle": "fan.mi_air_purifier_bedroom · off"}
+  ],
+  "allow_free_text": false
+}
+```
+
+字段约束:
+
+- `message`:必填,中文问句,≤ 80 字
+- `candidates`:必填,长度 2–6;**少于 2 项时后端拒绝**(单选项无意义,模型应该用 final_response 代替)
+- `candidates[].id`:必填,字符串,作为机器可识别 ID(实体场景=entity_id;通用场景=自定义短串如 `weekday`)
+- `candidates[].label`:必填,中文短句,≤ 30 字,作为用户看到 + 点击后回传的文本
+- `candidates[].subtitle`:可选,灰字次行(实体场景常用 `entity_id · state`)
+- `allow_free_text`:可选,默认 `false`。**默认隐藏文字输入提示**,符合"优先图形化选择"原则
+- 当模型确实需要开放回答(如自定义时间)时才设 `true`;并且建议在 `candidates` 里仍提供常见预设(如 19:00 / 20:00 / 21:00)+ 一个 `id: "custom"` `label: "其他时间"` 的 chip,点击后下一轮模型用 `final_response` 引导自由输入
+
+向后兼容:旧形态 `{candidates: [{entity_id, name}]}` 在 `chat_session.py` 接收解析时做迁移,自动补成新形态(`id ← entity_id`,`label ← name`,`subtitle ← entity_id`)。
+
+**前端 chip 渲染规则**:
+
+- chip 横排或网格,**最小可点面积 44×44px**(满足 Apple HIG / WCAG 触屏指引,确保手机/平板墙板可点)
+- chip 字号 ≥ 14px,有明显边框/背景色,不要做成单色文字链接
+- `subtitle` 用 11–12px 灰字置于 `label` 下方(可选)
+- 若 `allow_free_text=true`,所有 chip 之下放一行小灰字 `"或者直接输入..."`,**非 chip 区不强调**
+- 用户点 chip 后:输入框被 chip 的 label 自动填入并立即发送,不要求二次确认(降低操作成本)
+
+### 7.7 `automation_draft` 的 `rationale` 字段(必填)
+
+**schema 扩展**:
+
+```json
+{
+  "type": "automation_draft",
+  "title": "晚上 7 点开客厅净化器",
+  "description": "...",
+  "automation": { "alias": "...", "trigger": [...], "action": [...] },
+  "risk_level": "low",
+  "requires_confirmation": false,
+  "rationale": {
+    "entities": ["fan.mi_air_purifier_living(你刚选的'客厅净化器')"],
+    "trigger": "每天 19:00(你确认了'周末也开')",
+    "conditions": [],
+    "actions": ["fan.turn_on,默认 mode"],
+    "edge_cases": "未问及离线情况,默认 HA 触发即尝试"
+  }
+}
+```
+
+每个字段都是中文短句,**对应模型在生成前已经从对话里推演到的依据**。
+
+校验规则:
+
+- `rationale` **必填**;若模型未返回:走 §7.2 步骤 5 system message 重试一次,内容为 `"automation_draft 必须包含 rationale 字段说明设计依据,请补全"`
+- 重试仍缺失 → **不视为协议失败**,但在前端卡片渲染时显示一条警告 `⚠️ 模型未提供设计依据,无法审计这个草稿是怎么推演出来的;建议丢弃后再试一次`,审批按钮**禁用**,审计日志记 `result: "rationale_missing"`
+- 这样既不让模型偷懒,也不会用户用不了
+
+**前端 rationale 区渲染**(`automation_draft` 卡片展开后):
+
+```
+设计依据(从对话推演)
+─────────────────────
+实体:fan.mi_air_purifier_living(你刚选的"客厅净化器")
+触发:每天 19:00(你确认了"周末也开")
+条件:无
+动作:fan.turn_on,默认 mode
+边缘情况:未问及离线情况,默认 HA 触发即尝试
+─────────────────────
+```
+
+让用户能审计这份草稿是怎么从对话推出来的,本身也是一道"避免模糊草稿"的关。
 
 ## 8. 首次环境就绪检查
 
@@ -583,7 +700,7 @@ class ValidationResult:
 
 - `custom_components/haclaw/agent/__init__.py`(包标识)
 - `custom_components/haclaw/agent/prompts.py` — `BASE_SYSTEM_PROMPT` + `MODE_SUFFIX_*`(三种模式后缀,见 §7.3) + BIND_PRESENCE marker 指令
-- `custom_components/haclaw/agent/protocol.py` — JSON 响应解析 + 协议白名单校验 + **按模式过滤 `ALLOWED_TYPES_BY_MODE`**(见 §7.5)
+- `custom_components/haclaw/agent/protocol.py` — JSON 响应解析 + 协议白名单校验 + **按模式过滤 `ALLOWED_TYPES_BY_MODE`**(见 §7.5) + clarification schema 迁移(旧 `{entity_id, name}` → 新 `{id, label, subtitle}`,见 §7.6) + automation_draft `rationale` 必填校验(见 §7.7)
 - `custom_components/haclaw/agent/chat_session.py` — 单轮对话编排,接现有 `OpenAICompatibleClient`,负责按 mode 拼接 prompt 后缀
 - `custom_components/haclaw/storage/conversations.py` — `conversations.json` 读写 + 滚动淘汰
 - `custom_components/haclaw/storage/presence.py` — `presence.json` 读写 + entity_id 校验
@@ -616,8 +733,13 @@ class ValidationResult:
 - [ ] 首次进入,环境检查卡片自动出现在对话顶部;3 项检查正确显示;链接可点击
 - [ ] 点"全部跳过"后,刷新页面卡片不再自动弹,但顶部出现 ⚠️ 小红点
 - [ ] 输入"打开客厅灯"发送,看到"思考中..."然后变成模型回复气泡
-- [ ] 模型如果返回 `clarification`,看到候选 chip 卡;点 chip 自动作为下一条消息发送
-- [ ] 模型如果返回 `automation_draft`,看到折叠卡;展开能看到 YAML;**自动化模式下** `审批写入` 按钮调用现有 `approve_automation_draft`,**计划模式下**按钮置灰且带提示
+- [ ] 模型如果返回 `clarification`,看到候选 chip 卡;点 chip 自动作为下一条消息发送(无需二次确认)
+- [ ] chip 默认隐藏文字输入提示;只有 `allow_free_text=true` 时才显示"或直接输入..."灰字
+- [ ] chip 最小可点面积 ≥ 44×44px,字号 ≥ 14px(手机/墙板友好)
+- [ ] **自动化模式下,模糊请求(如"晚上开净化器")应该先看到 1-3 轮 clarification 而不是直接生成草稿**
+- [ ] 自动化模式下生成的 `automation_draft` 卡片**必须**展示"设计依据 rationale"区,列出 entities/trigger/conditions/actions/edge_cases 各项的来源
+- [ ] 模型如果返回 `automation_draft`,看到折叠卡;展开能看到 YAML + rationale;**自动化模式下** `审批写入` 按钮调用现有 `approve_automation_draft`,**计划模式下**按钮置灰且带提示
+- [ ] 若模型返回的 `automation_draft` 缺 `rationale`,后端重试 1 次后仍缺 → 卡片渲染但审批按钮**禁用**,带 `⚠️ 模型未提供设计依据` 警告
 - [ ] 草稿如缺失集成,卡片底部显示黄色警告 + 安装链接
 - [ ] 切到执行模式时弹一次确认 dialog;输入框旁出现红色"⚠️ 实验中"标签;模型即使返回 `tool_call` 也只是灰行
 - [ ] 切换模式后下一条消息使用对应模式 prompt(可通过看后端日志或测试断言)
@@ -641,7 +763,7 @@ class ValidationResult:
 ### 14.3 测试
 
 - [ ] `tests/test_chat_session.py` 覆盖正常一轮对话、JSON 协议失败的 system message 重试、第二次仍失败的 protocol_error 路径、上下文截断
-- [ ] `tests/test_protocol.py` 覆盖 5 种协议类型解析 + 非法 JSON + 缺失 `type` + `type` 不在白名单 + 三种模式的 `ALLOWED_TYPES_BY_MODE` 拒绝集合
+- [ ] `tests/test_protocol.py` 覆盖 5 种协议类型解析 + 非法 JSON + 缺失 `type` + `type` 不在白名单 + 三种模式的 `ALLOWED_TYPES_BY_MODE` 拒绝集合 + clarification 旧形态(`entity_id`/`name`)→ 新形态(`id`/`label`/`subtitle`)迁移 + clarification candidates < 2 时拒绝 + automation_draft 缺 `rationale` 时校验失败
 - [ ] `tests/test_ui_state.py` 覆盖 `last_mode` 非法值容错(默认回退 automation)、`execute_mode_warning_seen` 持久化、文件不存在时容错
 - [ ] `tests/test_environment.py` 覆盖三项必检 + advanced 项的 ok/缺失分支,以及 `failing_required_count` 准确性
 - [ ] `tests/test_presence.py` 覆盖 `list_presence_candidates` 排序(person 在前)、`bind_presence_entity` 校验拒绝(非 person/device_tracker、不存在的 entity_id)、`get_presence_binding` 未绑/已绑
@@ -679,7 +801,60 @@ class ValidationResult:
 | 模式 | B 阶段是否真"动手" | 落点章节 |
 |------|------------------|---------|
 | 📋 计划 | 不动 | §5.4, §7.3.2, §7.5 |
-| ⚡ 自动化 | 写草稿(默认禁用,沿用现状) | §5.4, §7.3.2, §7.5 |
+| ⚡ 自动化 | 写草稿(默认禁用,沿用现状) | §5.4, §7.3.2, §7.5, §7.6, §7.7 |
 | 🛠 执行 | **B 阶段不动**(实验占位) | §5.4, §7.3.2, §7.5 |
 
 执行模式真实控制设备 + "根据历史记录推荐自动化"两项延后到 follow-up spec 处理。
+
+## 18. 新增设计:自动化模式的 asking-answer 流(README 之外的扩展)
+
+**对应议题**:用户提出"参考 Claude 的 asking-answer 逻辑,多询问用户,避免生成模糊不实用的自动化",并强调"优先图形化选择,避免输入"。
+
+### 18.1 设计四件套
+
+1. **扩展 `clarification` schema**(§7.6) — 把它从"实体歧义专用"扩展为通用 multiple choice;字段 `candidates[].id/label/subtitle`,默认 `allow_free_text=false`(图形化选择优先,文字输入是 fallback);chip 最小 44×44px、字号 ≥ 14px;旧形态向后兼容
+2. **强化 `MODE_SUFFIX_AUTOMATION`**(§7.3.2) — 模型必须先用 clarification 问清 5 大维度(实体 / 触发 / 条件 / 动作参数 / 边缘情况)再生成 draft;一次只问 1 个维度;最多 4 轮;chip 优先;生成 draft 前要 final_response 摘要让用户校对
+3. **`automation_draft` 加 `rationale` 必填字段**(§7.7) — 列出每个设计点来自对话哪一轮的回答;模型不写 rationale 走重试;仍缺则前端禁用审批按钮 + 警告
+4. **前端 chip-first UX**(§6.2 表格 + §7.6 渲染规则) — 大 chip、明显边框、隐藏文字输入提示;用户点 chip 自动发送不二次确认
+
+### 18.2 用户体验示例
+
+```
+用户:晚上开净化器
+模型:[clarification] 哪台净化器?
+       [客厅净化器 fan.mi_air_purifier_living · on]
+       [卧室净化器 fan.mi_air_purifier_bedroom · off]
+
+用户(点 chip):客厅净化器
+模型:[clarification] 周末也开吗?
+       [周末也开] [只工作日] [只周末]
+
+用户(点 chip):周末也开
+模型:[clarification] 几点开?
+       [19:00] [20:00] [21:00] [其他时间] (allow_free_text=true)
+
+用户(点 chip):19:00
+模型:[final_response] 我理解你想要每天 19:00 打开 fan.mi_air_purifier_living(客厅净化器),无附加条件 — 我开始生成草稿。
+
+用户:OK
+模型:[automation_draft]
+       title: 晚上 19 点开客厅净化器
+       (YAML)
+       rationale:
+         entities: fan.mi_air_purifier_living(用户在第 1 轮选了"客厅净化器")
+         trigger: 每天 19:00(用户在第 3 轮选了"19:00",并在第 2 轮确认"周末也开")
+         conditions: 无(用户未提任何附加条件)
+         actions: fan.turn_on(默认 mode)
+         edge_cases: 未问及离线情况,默认 HA 触发即尝试
+```
+
+整轮对话用户**只打了 2 个字**("OK"),其它全是 chip 点击。
+
+### 18.3 与"避免模糊草稿"的关系
+
+| 问题 | 本设计的拦截点 |
+|------|---------------|
+| 模型编造实体 ID | §7.3.2 prompt 明令"不在 hass.states 的不行";§14.2 验收"draft 实体必须真实存在" |
+| 模型默认全天 vs 工作日不告知 | §7.3.2 必须先问 condition 维度;rationale 字段强制写"用户未提任何附加条件" |
+| 用户输入太模糊但模型硬猜 | §7.3.2 至多 4 轮 clarification 后才允许猜测,且必须 rationale 标注"假设了 X" |
+| 用户审批后才发现"原来这样啊" | rationale 区让用户在审批前看到完整推演链条,异常处可"丢弃后再试一次" |
