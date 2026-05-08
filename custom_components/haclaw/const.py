@@ -60,3 +60,35 @@ PROVIDER_PRESETS = {
         "model": "",
     },
 }
+
+# New storage files (range B)
+CONVERSATIONS_FILE = "conversations.json"
+PRESENCE_FILE = "presence.json"
+UI_STATE_FILE = "ui_state.json"
+
+# New service names (range B)
+SERVICE_GET_ENVIRONMENT_READINESS = "get_environment_readiness"
+SERVICE_LIST_PRESENCE_CANDIDATES = "list_presence_candidates"
+SERVICE_GET_PRESENCE_BINDING = "get_presence_binding"
+SERVICE_BIND_PRESENCE_ENTITY = "bind_presence_entity"
+SERVICE_SWITCH_MODEL = "switch_model"
+
+# New WS commands
+WS_TYPE_CHAT = "haclaw/chat"
+WS_TYPE_CONVERSATIONS_LIST = "haclaw/conversations/list"
+WS_TYPE_CONVERSATIONS_CLEAR = "haclaw/conversations/clear"
+
+# Chat session limits
+MAX_USER_MESSAGE_CHARS = 4000
+MAX_HISTORY_CHARS = 8000
+DEFAULT_CHAT_MAX_TOKENS = 1024
+MAX_CONVERSATIONS = 50
+MAX_MESSAGES_PER_CONVERSATION = 200
+MAX_CONVERSATIONS_FILE_BYTES = 5 * 1024 * 1024
+
+# Modes
+MODE_PLAN = "plan"
+MODE_AUTOMATION = "automation"
+MODE_EXECUTE = "execute"
+ALL_MODES = (MODE_PLAN, MODE_AUTOMATION, MODE_EXECUTE)
+DEFAULT_MODE = MODE_AUTOMATION
