@@ -27,9 +27,13 @@ from .const import (
     FRONTEND_PANEL_JS,
     FRONTEND_STATIC_URL,
     FRONTEND_URL_PATH,
+    PRESENCE_FILE,
     PROVIDER_PRESETS,
     SERVICE_APPROVE_AUTOMATION_DRAFT,
+    SERVICE_BIND_PRESENCE_ENTITY,
     SERVICE_CREATE_AUTOMATION_DRAFT,
+    SERVICE_GET_PRESENCE_BINDING,
+    SERVICE_LIST_PRESENCE_CANDIDATES,
     SERVICE_TEST_CONNECTION,
     STORAGE_DIR,
 )
@@ -44,6 +48,12 @@ from .storage.drafts import (
     load_automation_aliases,
     load_draft_aliases,
     mark_draft_approved,
+)
+from .storage.presence import (
+    BindingError,
+    list_candidates,
+    load_binding,
+    save_binding,
 )
 from .tools.automation import validate_automation_draft
 
@@ -73,6 +83,10 @@ APPROVE_AUTOMATION_DRAFT_SCHEMA = vol.Schema(
         vol.Optional("confirmed", default=False): cv.boolean,
     }
 )
+
+LIST_PRESENCE_CANDIDATES_SCHEMA = vol.Schema({})
+GET_PRESENCE_BINDING_SCHEMA = vol.Schema({})
+BIND_PRESENCE_ENTITY_SCHEMA = vol.Schema({vol.Required("entity_id"): cv.string})
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -150,6 +164,27 @@ def _async_register_services(hass: HomeAssistant) -> None:
         schema=APPROVE_AUTOMATION_DRAFT_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
     )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_LIST_PRESENCE_CANDIDATES,
+        _async_handle_list_presence_candidates,
+        schema=LIST_PRESENCE_CANDIDATES_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_PRESENCE_BINDING,
+        _async_handle_get_presence_binding,
+        schema=GET_PRESENCE_BINDING_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_BIND_PRESENCE_ENTITY,
+        _async_handle_bind_presence_entity,
+        schema=BIND_PRESENCE_ENTITY_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
     domain_data["services_registered"] = True
 
 
@@ -162,6 +197,9 @@ def _async_remove_services(hass: HomeAssistant) -> None:
         SERVICE_TEST_CONNECTION,
         SERVICE_CREATE_AUTOMATION_DRAFT,
         SERVICE_APPROVE_AUTOMATION_DRAFT,
+        SERVICE_LIST_PRESENCE_CANDIDATES,
+        SERVICE_GET_PRESENCE_BINDING,
+        SERVICE_BIND_PRESENCE_ENTITY,
     ):
         hass.services.async_remove(DOMAIN, service)
     domain_data["services_registered"] = False
@@ -377,6 +415,44 @@ async def _async_handle_approve_automation_draft(call: ServiceCall) -> dict[str,
         "path": str(automations_path),
         "automation": validation.automation,
     }
+
+
+async def _async_handle_list_presence_candidates(call: ServiceCall) -> dict[str, Any]:
+    return {"candidates": list_candidates(call.hass)}
+
+
+async def _async_handle_get_presence_binding(call: ServiceCall) -> dict[str, Any]:
+    path = _storage_path(call.hass, PRESENCE_FILE)
+    binding = await call.hass.async_add_executor_job(load_binding, path)
+    return {"me_person_entity_id": binding}
+
+
+async def _async_handle_bind_presence_entity(call: ServiceCall) -> dict[str, Any]:
+    hass = call.hass
+    entity_id = call.data["entity_id"]
+    path = _storage_path(hass, PRESENCE_FILE)
+
+    def _save() -> None:
+        save_binding(
+            path,
+            entity_id=entity_id,
+            entity_exists=lambda eid: hass.states.get(eid) is not None,
+        )
+
+    try:
+        await hass.async_add_executor_job(_save)
+    except BindingError as err:
+        return {"success": False, "message": str(err)}
+
+    await _async_append_audit(
+        hass,
+        {
+            "tool": SERVICE_BIND_PRESENCE_ENTITY,
+            "result": "presence_bound",
+            "entity_id": entity_id,
+        },
+    )
+    return {"success": True, "me_person_entity_id": entity_id}
 
 
 def _get_provider_config(

@@ -55,3 +55,24 @@ approve_automation_draft:
       default: false
       selector:
         boolean:
+
+list_presence_candidates:
+  name: List presence candidates
+  description: Return person.* and device_tracker.* entities for the binding card.
+  fields: {}
+
+get_presence_binding:
+  name: Get presence binding
+  description: Return the currently bound presence entity_id, or null.
+  fields: {}
+
+bind_presence_entity:
+  name: Bind presence entity
+  description: Persist the user-selected presence entity_id.
+  fields:
+    entity_id:
+      name: Entity ID
+      description: Must start with person. or device_tracker.
+      required: true
+      selector:
+        text:
