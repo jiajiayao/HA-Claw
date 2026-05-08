@@ -26,6 +26,8 @@ def test_automation_mode_contains_chip_first_rules() -> None:
     assert "自动化模式" in prompt
     assert "rationale" in prompt
     assert "allow_free_text" in prompt
+    assert "1-6" in prompt
+    assert "2-6" not in prompt
     assert "workday" in prompt
 
 

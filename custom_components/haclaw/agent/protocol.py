@@ -192,8 +192,8 @@ def migrate_clarification(msg: dict[str, Any]) -> dict[str, Any]:
 def validate_for_mode(msg: dict[str, Any], mode: str) -> None:
     """Validate that the assistant message type is allowed in the given mode.
 
-    Also performs schema checks specific to range-B types (clarification 2+
-    candidates with id/label, automation_draft.rationale required).
+    Also performs schema checks specific to range-B types (answerable
+    clarification, automation_draft.rationale required).
     """
     msg_type = msg.get("type")
     allowed = ALLOWED_TYPES_BY_MODE.get(mode, set())
@@ -202,8 +202,12 @@ def validate_for_mode(msg: dict[str, Any], mode: str) -> None:
 
     if msg_type == "clarification":
         cands = msg.get("candidates", [])
-        if not isinstance(cands, list) or len(cands) < 2:
-            raise ProtocolError("clarification 至少需要 2 个 candidates")
+        if not isinstance(cands, list):
+            raise ProtocolError("clarification.candidates 必须是数组")
+        if not cands and msg.get("allow_free_text") is not True:
+            raise ProtocolError(
+                "clarification 需要 candidates 或 allow_free_text=true"
+            )
         for c in cands:
             if not isinstance(c, dict) or "id" not in c or "label" not in c:
                 raise ProtocolError("clarification candidate 必须含 id 和 label")

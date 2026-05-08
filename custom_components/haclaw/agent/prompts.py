@@ -58,7 +58,7 @@ MODE_SUFFIX_AUTOMATION = """\
 
 【提问规则】
 - 缺信息时优先用 clarification 类型问
-- candidates 必须 2-6 项
+- candidates 可 1-6 项;如果是开放式问题,可以不提供 candidates,但必须设置 allow_free_text=true
 - 一次只问一个最关键的维度
 - 最多 4 轮 clarification,4 轮后用合理默认值生成 draft + rationale 标注"假设了 X"
 

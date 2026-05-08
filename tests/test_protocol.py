@@ -81,13 +81,32 @@ def test_clarification_migration_from_legacy() -> None:
     assert out["allow_free_text"] is False
 
 
-def test_clarification_rejects_too_few_candidates() -> None:
+def test_clarification_allows_single_candidate_confirmation() -> None:
     msg = {
         "type": "clarification",
-        "message": "?",
-        "candidates": [{"id": "x", "label": "x"}],
+        "message": "只找到一个灯,是否使用它?",
+        "candidates": [{"id": "light.living_room", "label": "客厅灯"}],
     }
-    with pytest.raises(ProtocolError, match="2"):
+    validate_for_mode(msg, MODE_AUTOMATION)
+
+
+def test_clarification_allows_free_text_without_candidates() -> None:
+    msg = {
+        "type": "clarification",
+        "message": "每天晚上几点开灯?",
+        "allow_free_text": True,
+        "free_text_placeholder": "例如 19:30",
+    }
+    validate_for_mode(msg, MODE_AUTOMATION)
+
+
+def test_clarification_rejects_unanswerable_prompt() -> None:
+    msg = {
+        "type": "clarification",
+        "message": "每天晚上几点开灯?",
+        "candidates": [],
+    }
+    with pytest.raises(ProtocolError, match="candidates|allow_free_text"):
         validate_for_mode(msg, MODE_AUTOMATION)
 
 
