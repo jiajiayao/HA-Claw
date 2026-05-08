@@ -44,9 +44,12 @@ from .const import (
     STORAGE_DIR,
     UI_STATE_FILE,
     WS_TYPE_CHAT,
+    WS_TYPE_CONVERSATIONS_CLEAR,
+    WS_TYPE_CONVERSATIONS_LIST,
 )
 from .providers.openai_compatible import OpenAICompatibleClient, ProviderError
 from .storage.audit_log import append_audit_event
+from .storage.conversations import clear_all, clear_conversation, list_conversations
 from .storage.drafts import (
     DraftStorageError,
     append_automation,
@@ -271,12 +274,65 @@ async def _async_handle_ws_chat(
     connection.send_result(msg["id"], result)
 
 
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_TYPE_CONVERSATIONS_LIST,
+    }
+)
+@websocket_api.async_response
+async def _async_handle_ws_conversations_list(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    convs = await hass.async_add_executor_job(
+        list_conversations,
+        _storage_path(hass, CONVERSATIONS_FILE),
+    )
+    summary = [
+        {
+            "id": conv["id"],
+            "created_at": conv.get("created_at"),
+            "updated_at": conv.get("updated_at"),
+            "message_count": len(conv.get("messages", [])),
+        }
+        for conv in convs
+    ]
+    connection.send_result(msg["id"], {"conversations": summary})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_TYPE_CONVERSATIONS_CLEAR,
+        vol.Optional("conversation_id"): str,
+    }
+)
+@websocket_api.async_response
+async def _async_handle_ws_conversations_clear(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    conversations_path = _storage_path(hass, CONVERSATIONS_FILE)
+    if msg.get("conversation_id"):
+        await hass.async_add_executor_job(
+            clear_conversation,
+            conversations_path,
+            msg["conversation_id"],
+        )
+    else:
+        await hass.async_add_executor_job(clear_all, conversations_path)
+    connection.send_result(msg["id"], {"success": True})
+
+
 def _async_register_ws_commands(hass: HomeAssistant) -> None:
     domain_data = _domain_data(hass)
     if domain_data.get("ws_registered", False):
         return
 
     websocket_api.async_register_command(hass, _async_handle_ws_chat)
+    websocket_api.async_register_command(hass, _async_handle_ws_conversations_list)
+    websocket_api.async_register_command(hass, _async_handle_ws_conversations_clear)
     domain_data["ws_registered"] = True
 
 

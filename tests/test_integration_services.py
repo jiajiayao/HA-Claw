@@ -23,6 +23,8 @@ from custom_components.haclaw.const import (
     SERVICE_SWITCH_MODEL,
     SERVICE_TEST_CONNECTION,
     WS_TYPE_CHAT,
+    WS_TYPE_CONVERSATIONS_CLEAR,
+    WS_TYPE_CONVERSATIONS_LIST,
 )
 from custom_components.haclaw.providers.openai_compatible import ChatCompletionResult
 
@@ -368,6 +370,15 @@ class IntegrationServiceTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertIn(WS_TYPE_CHAT, hass.data["websocket_api"])
 
+    def test_registers_ws_conversations_commands(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            hass = FakeHass(tmp_dir)
+
+            haclaw._async_register_ws_commands(hass)
+
+            self.assertIn(WS_TYPE_CONVERSATIONS_LIST, hass.data["websocket_api"])
+            self.assertIn(WS_TYPE_CONVERSATIONS_CLEAR, hass.data["websocket_api"])
+
     async def test_ws_chat_returns_final_response(self):
         handler = getattr(haclaw, "_async_handle_ws_chat", None)
         self.assertIsNotNone(handler)
@@ -420,6 +431,59 @@ class IntegrationServiceTests(unittest.IsolatedAsyncioTestCase):
                     "mode": "garbage",
                 }
             )
+
+    async def test_ws_conversations_list_returns_summary(self):
+        handler = getattr(haclaw, "_async_handle_ws_conversations_list", None)
+        self.assertIsNotNone(handler)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            from custom_components.haclaw.storage.conversations import append_message
+
+            hass = FakeHass(tmp_dir)
+            connection = FakeConnection()
+            convs_path = Path(tmp_dir) / "haclaw" / "conversations.json"
+            append_message(convs_path, "c1", {"role": "user", "content": "hi"})
+
+            await handler.__wrapped__(
+                hass,
+                connection,
+                {"id": 1, "type": WS_TYPE_CONVERSATIONS_LIST},
+            )
+
+            self.assertEqual(connection.errors, [])
+            self.assertEqual(connection.results[0][0], 1)
+            summary = connection.results[0][1]["conversations"][0]
+            self.assertEqual(summary["id"], "c1")
+            self.assertEqual(summary["message_count"], 1)
+
+    async def test_ws_conversations_clear_specific(self):
+        handler = getattr(haclaw, "_async_handle_ws_conversations_clear", None)
+        self.assertIsNotNone(handler)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            from custom_components.haclaw.storage.conversations import (
+                append_message,
+                load_conversation,
+            )
+
+            hass = FakeHass(tmp_dir)
+            connection = FakeConnection()
+            convs_path = Path(tmp_dir) / "haclaw" / "conversations.json"
+            append_message(convs_path, "c1", {"role": "user", "content": "hi"})
+            append_message(convs_path, "c2", {"role": "user", "content": "keep"})
+
+            await handler.__wrapped__(
+                hass,
+                connection,
+                {
+                    "id": 2,
+                    "type": WS_TYPE_CONVERSATIONS_CLEAR,
+                    "conversation_id": "c1",
+                },
+            )
+
+            self.assertEqual(connection.errors, [])
+            self.assertEqual(connection.results, [(2, {"success": True})])
+            self.assertEqual(load_conversation(convs_path, "c1")["messages"], [])
+            self.assertEqual(len(load_conversation(convs_path, "c2")["messages"]), 1)
 
 
 if __name__ == "__main__":
