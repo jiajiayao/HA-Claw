@@ -186,6 +186,19 @@ def test_execute_mode_warning_contract_is_present():
 def test_settings_modal_and_history_drawer_contract_is_present():
     source = PANEL_JS.read_text(encoding="utf-8")
 
+    assert 'id="open-model-settings"' in source
+    assert 'id="open-presence-bind"' in source
+    assert 'id="open-env-status"' in source
+    assert "模型:" in source
+    assert "绑定存在" in source
+    assert "环境" in source
+    assert ">⚙ 设置</button>" in source
+    assert ">☰ 历史</button>" in source
+    assert "_openEnvironmentStatus()" in source
+    assert "_openPresenceBinding()" in source
+    assert 'this.querySelector("#open-model-settings")?.addEventListener("click", () => this._openSettingsModal())' in source
+    assert 'this.querySelector("#open-presence-bind")?.addEventListener("click", () => this._openPresenceBinding())' in source
+    assert 'this.querySelector("#open-env-status")?.addEventListener("click", () => this._openEnvironmentStatus())' in source
     assert 'this.querySelector("#open-settings")?.addEventListener("click", () => this._openSettingsModal())' in source
     assert 'this.querySelector("#open-drawer")?.addEventListener("click", () => this._openDrawer())' in source
     assert "_openSettingsModal()" in source
@@ -216,6 +229,10 @@ def test_mobile_breakpoint_contract_is_present():
     mobile = source.split("@media (max-width: 640px)", maxsplit=1)[1]
     assert ".topbar .left" in mobile
     assert "font-size: 13px" in mobile
+    assert ".topbar .right" in mobile
+    assert ".top-action" in mobile
+    assert "min-height: 36px" in mobile
+    assert ".topbar .right .icon-btn:nth-child(3)" not in mobile
     assert ".empty h2" in mobile
     assert "font-size: 22px" in mobile
     assert ".empty .chips" in mobile

@@ -575,6 +575,27 @@ class HAclawPanel extends HTMLElement {
     this._render();
   }
 
+  async _openEnvironmentStatus() {
+    try {
+      localStorage.removeItem("haclaw.env_dismissed");
+    } catch (_err) {
+      // Ignore storage failures in embedded HA contexts.
+    }
+    this._envCardShown = false;
+    this._messages = this._messages.filter((message) => message.kind !== "env_check");
+    await this._refreshState();
+  }
+
+  _openPresenceBinding() {
+    this._messages = this._messages.filter(
+      (message) =>
+        message.kind !== "presence_bind" &&
+        message.kind !== "presence_bind_empty" &&
+        message.kind !== "presence_bind_done",
+    );
+    this._maybeInjectPresenceCard();
+  }
+
   _openInstallModal(domain) {
     const items = [
       ...(this._envState?.items || []),
@@ -783,16 +804,21 @@ class HAclawPanel extends HTMLElement {
       return;
     }
 
-    const status = `${this._modelName || "未配置"} · ${
-      this._providerOk ? "✅" : "❌"
-    }`;
+    const modelLabel = this._modelName || "未配置";
+    const modelState = !this._modelName
+      ? "待设置"
+      : this._providerOk
+        ? "可用"
+        : "异常";
+    const modelIcon = !this._modelName ? "⚠️" : this._providerOk ? "✅" : "❌";
+    const modelStatusClass = this._modelName && this._providerOk ? "ok" : "warn";
     const failingBadge =
       this._envFailingCount > 0
-        ? this._html`<span class="badge warn">⚠️${String(this._envFailingCount)}</span>`
+        ? this._html`<button class="top-action badge warn" id="open-env-status" type="button" title="查看环境检查" aria-label="查看环境检查,还有 ${String(this._envFailingCount)} 项需要处理">⚠️ 环境 ${String(this._envFailingCount)}</button>`
         : "";
     const presenceHint = this._presenceBound
       ? ""
-      : '<span class="badge hint">💡未绑存在</span>';
+      : '<button class="top-action badge hint" id="open-presence-bind" type="button" title="绑定 person 或 device_tracker 存在实体" aria-label="绑定存在实体">💡 绑定存在</button>';
 
     const isEmpty = this._messages.length === 0;
     const greetingHTML = isEmpty
@@ -823,12 +849,17 @@ class HAclawPanel extends HTMLElement {
     this.innerHTML = `
       <main class="page">
         <header class="topbar">
-          <div class="left">${this._html`HAclaw · ${status}`}</div>
+          <div class="left">
+            <span class="brand">HAclaw</span>
+            <button class="top-action top-status ${this._escape(modelStatusClass)}" id="open-model-settings" type="button" title="打开模型设置" aria-label="${this._escape(`模型状态: ${modelLabel}, ${modelState}. 打开设置`)}">
+              ${this._escape(`模型: ${modelLabel} · ${modelState} ${modelIcon}`)}
+            </button>
+          </div>
           <div class="right">
             ${presenceHint}
             ${failingBadge}
-            <button class="icon-btn" id="open-settings">⚙</button>
-            <button class="icon-btn" id="open-drawer">☰</button>
+            <button class="top-action icon-btn" id="open-settings" type="button" title="打开设置" aria-label="打开设置">⚙ 设置</button>
+            <button class="top-action icon-btn" id="open-drawer" type="button" title="打开对话历史" aria-label="打开对话历史">☰ 历史</button>
           </div>
         </header>
         <section class="conversation">${greetingHTML}${messagesHTML}</section>
@@ -930,6 +961,9 @@ class HAclawPanel extends HTMLElement {
         this._refreshState();
       });
     });
+    this.querySelector("#open-model-settings")?.addEventListener("click", () => this._openSettingsModal());
+    this.querySelector("#open-presence-bind")?.addEventListener("click", () => this._openPresenceBinding());
+    this.querySelector("#open-env-status")?.addEventListener("click", () => this._openEnvironmentStatus());
     this.querySelector("#open-settings")?.addEventListener("click", () => this._openSettingsModal());
     this.querySelector("#open-drawer")?.addEventListener("click", () => this._openDrawer());
     this.querySelector("#send-btn")?.addEventListener("click", () => this._onSend());
@@ -953,20 +987,61 @@ class HAclawPanel extends HTMLElement {
         align-items: center;
         border-bottom: 1px solid var(--divider-color);
         display: flex;
+        gap: 12px;
         justify-content: space-between;
         padding: 8px 16px;
+      }
+
+      .topbar .left {
+        align-items: center;
+        display: flex;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .brand {
+        font-weight: 700;
+        white-space: nowrap;
       }
 
       .topbar .right {
         align-items: center;
         display: flex;
+        flex-wrap: wrap;
         gap: 8px;
+        justify-content: flex-end;
+      }
+
+      .top-action {
+        align-items: center;
+        background: transparent;
+        border: 1px solid var(--divider-color);
+        border-radius: 14px;
+        color: var(--primary-text-color);
+        cursor: pointer;
+        display: inline-flex;
+        font-size: 12px;
+        gap: 4px;
+        min-height: 32px;
+        padding: 4px 10px;
+        white-space: nowrap;
+      }
+
+      .top-action:hover {
+        background: var(--secondary-background-color);
+      }
+
+      .top-status.ok {
+        border-color: rgba(27, 143, 77, 0.35);
+      }
+
+      .top-status.warn {
+        border-color: rgba(219, 68, 55, 0.35);
       }
 
       .badge {
         border-radius: 12px;
         font-size: 12px;
-        padding: 2px 8px;
       }
 
       .badge.warn {
@@ -980,11 +1055,7 @@ class HAclawPanel extends HTMLElement {
       }
 
       .icon-btn {
-        background: transparent;
-        border: 0;
-        color: var(--primary-text-color);
-        cursor: pointer;
-        font-size: 18px;
+        font-size: 13px;
       }
 
       .conversation {
@@ -1572,10 +1643,17 @@ class HAclawPanel extends HTMLElement {
 
         .topbar .left {
           font-size: 13px;
+          flex-wrap: wrap;
         }
 
-        .topbar .right .icon-btn:nth-child(3) {
-          display: none;
+        .topbar .right {
+          gap: 6px;
+          justify-content: flex-start;
+          width: 100%;
+        }
+
+        .top-action {
+          min-height: 36px;
         }
 
         .empty h2 {
