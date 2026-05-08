@@ -47,6 +47,7 @@
 - HAclaw **不收/不存** 原始 MAC、IMEI、手机号、GPS 坐标 — 存在感应只做"绑定哪个已有 person/device_tracker 实体是我"
 - 所有错误信息、对话内容、审计日志都必须**脱敏**,不能泄露 API key / token / cookie
 - 默认禁用 AI 生成的自动化(`initial_state: false`)
+- **凭据永远不进 HAclaw**:用户给第三方集成(如小米账号、HACS GitHub OAuth)的凭据不应该出现在 HAclaw 的输入框、对话历史、配置文件、日志里。HAclaw 通过"安装指令模板"(§19)让用户**复制 prompt → 粘贴到他自己的 AI agent(Claude Code / Codex)** 由 agent 在用户机器上执行;凭据只在用户↔他的 agent 之间流动,HAclaw 全程不接触
 
 ## 4. 总体架构
 
@@ -178,8 +179,8 @@ flowchart LR
 | JSON type | 组件 | 关键交互 |
 |-----------|------|---------|
 | `final_response` | 文字气泡 | 纯展示;支持基础 markdown(粗体/列表/代码块) |
-| `clarification` | 候选 chip 卡(**chip 优先,文字输入是 fallback**) | schema 见 §7.6;每个 candidate 渲染为大 chip(`label` 为主文,可选 `subtitle` 灰字次行);点击 = 把 `label` 作为下一条用户消息发送(明文,模型读得懂);只有当 `allow_free_text=true` 时下方才出现"或直接输入..."灰字提示(默认隐藏);多个 chip 横排或网格,优先用最大可点面积 |
-| `automation_draft` | 草稿折叠卡 | 默认折叠仅显示标题 + 风险标签;展开看 YAML + **设计依据 `rationale` 区**(从对话推演的实体/触发/条件/动作);按钮组取决于 `requires_confirmation`:为 `true` 时显示 `[审批并确认风险]`(调用 `approve_automation_draft` 并传 `confirmed: true`),为 `false` 时显示 `[审批写入]`;另有 `[丢弃]` 和 `[修改后再说]`(把草稿 YAML 复制到输入框);如果 `missing_integrations` 非空,多渲染一行警告且 `审批*` 按钮禁用直到忽略警告或重新检查通过 |
+| `clarification` | 候选 chip 卡(**chip 优先,但文字输入是一等公民可见 fallback**) | schema 见 §7.6;每个 candidate 渲染为大 chip(`label` 为主文,可选 `subtitle` 灰字次行);点击 = 把 `label` 作为下一条用户消息发送(明文,模型读得懂);**当 `allow_free_text=true` 时,chips 下方出现一个真正的输入框 + 发送按钮**(不是 hint),placeholder 文案描述期望的输入(如"或者输入更具体的条件,例如:除节假日外都开");用户既可点 chip 也可在输入框打字 |
+| `automation_draft` | 草稿折叠卡 | 默认折叠仅显示标题 + 风险标签;展开看 YAML + **设计依据 `rationale` 区**(从对话推演的实体/触发/条件/动作);按钮组取决于 `requires_confirmation`:为 `true` 时显示 `[审批并确认风险]`(调用 `approve_automation_draft` 并传 `confirmed: true`),为 `false` 时显示 `[审批写入]`;另有 `[丢弃]` 和 `[修改后再说]`(把草稿 YAML 复制到输入框);如果 `missing_integrations` 非空,警告区每个缺失项额外加一个 `[📋 安装指令]` 按钮(调出安装指令 modal,详见 §19),`审批*` 按钮禁用直到忽略警告或重新检查通过 |
 | `risk_confirmation` | 风险卡(红边框) | 高对比红色背景,显示风险描述 + 计划动作;按钮 `[确认执行]`(本期禁用 + 提示"工具执行层未上线,留作展示")`[取消]` |
 | `tool_call`(模型尝试调工具) | 灰色单行 | `↪ 模型尝试调用 get_entity_state(本阶段不执行)`,折叠不展开 |
 | (前端注入)`environment_check` | 环境就绪卡(可折叠) | §8 详述 |
@@ -288,18 +289,33 @@ flowchart LR
   4. 动作参数: 灯亮度、空调温度、扫地机房间等(用户没说就用 HA 默认)
   5. 边缘情况: 设备离线?多次触发要不要去重?— 这一项可在 rationale 里说"未问及,默认 X"
 
-【提问规则:chip 优先,避免让用户输入文字】
-- 缺信息时优先用 clarification 类型问,**不用 final_response 抛开放问题让用户打字**
-- clarification 的 candidates 必须 2–6 项,涵盖最常见的几种回答 + 必要时加一个 id="custom" label="其他" chip
+【提问规则:chip 优先,但开放问题要允许文字输入】
+- 缺信息时优先用 clarification 类型问,**不用 final_response 抛开放问题让用户打字**(开放问题用 clarification 的 allow_free_text=true 覆盖)
+- clarification 的 candidates 必须 2–6 项,涵盖最常见的几种回答
 - 一次只问一个最关键的维度(单 clarification 一个 message),不要把多个问题挤进一个 message
 - 用户答了一轮 → 下一轮继续问下一个维度,直到所有关键维度明确
 - **最多 4 轮 clarification**,4 轮后即使有些维度仍模糊,也用合理默认值生成 draft + 在 rationale 里标注"假设了 X(用户未明确)"
-- 如果某个维度本质上是开放问题(如自定义触发时间),clarification 可加 `allow_free_text: true`,但仍**先给 3-4 个常见预设 chip**
+
+【何时设 allow_free_text=true】
+默认 false。但**以下场景必须设 true**(同时配 free_text_placeholder 给一句具体范例):
+- 时间相关(用户可能要"19:30"而不是整点 chip)
+- 日期/节假日相关(中国节假日不能简单二分,例如:用户可能要"除春节和国庆外")
+- 数值阈值(温度、亮度、湿度等)
+- 自动化命名 / 设备别名
+- 用户在之前轮次已经给出非 preset 答案的情况(说明 preset 不够覆盖)
+
+【关于节假日 / 工作日的特殊处理】
+- HA 自带 `workday` 集成,支持中国大陆 / 香港 / 台湾等地区的节假日识别
+- 当用户提到"节假日 / 假日 / 法定假 / 春节 / 国庆"等关键词,你应当:
+  1. 检查 `hass.config_entries` 是否已有 `workday` config_entry
+  2. 已有 → 直接在生成的 condition 里引用 `binary_sensor.workday` 实体
+  3. 没有 → 用 clarification 询问用户"中国节假日识别需要 HA workday 集成,要不要加?",candidates 给 [是,加上] [先用工作日近似] [我自己后面装];allow_free_text=true 让用户问"什么是 workday"
+- workday 是 HA 内置(不算第三方),不需要走"安装指令"模板路径;它只需要用户在 HA UI 配置一个 config_entry
 
 【生成 draft 之前的最后一步】
 信息够了时,先返回 final_response 给一句简明摘要(< 60 字),
 让用户校对一遍:"我理解你想要 X 实体在 Y 触发时执行 Z 动作 — 我开始生成草稿了"。
-如果用户回"嗯"/"是"/"对"/"OK"/"开始吧"等正面词,下一轮再返回 automation_draft。
+如果用户回"嗯"/"是"/"对"/"OK"/"好的"/"行"/"可以"/"开始吧"/"go"等正面词,下一轮再返回 automation_draft。
 如果用户提出修正,继续 clarification 或 final_response 调整。
 
 【automation_draft 必须包含 rationale 字段】
@@ -359,14 +375,15 @@ ALLOWED_TYPES_BY_MODE = {
 ```json
 {
   "type": "clarification",
-  "message": "你说的是哪台净化器?",
+  "message": "周末和节假日要怎么处理?",
   "candidates": [
-    {"id": "fan.mi_air_purifier_living", "label": "客厅净化器",
-     "subtitle": "fan.mi_air_purifier_living · on"},
-    {"id": "fan.mi_air_purifier_bedroom", "label": "卧室净化器",
-     "subtitle": "fan.mi_air_purifier_bedroom · off"}
+    {"id": "everyday", "label": "每天都开"},
+    {"id": "weekday", "label": "只工作日"},
+    {"id": "weekday_no_holiday", "label": "工作日且非节假日",
+     "subtitle": "依赖 HA workday 集成"}
   ],
-  "allow_free_text": false
+  "allow_free_text": true,
+  "free_text_placeholder": "或者输入更具体的条件,例如:除春节和国庆外都开"
 }
 ```
 
@@ -376,19 +393,36 @@ ALLOWED_TYPES_BY_MODE = {
 - `candidates`:必填,长度 2–6;**少于 2 项时后端拒绝**(单选项无意义,模型应该用 final_response 代替)
 - `candidates[].id`:必填,字符串,作为机器可识别 ID(实体场景=entity_id;通用场景=自定义短串如 `weekday`)
 - `candidates[].label`:必填,中文短句,≤ 30 字,作为用户看到 + 点击后回传的文本
-- `candidates[].subtitle`:可选,灰字次行(实体场景常用 `entity_id · state`)
-- `allow_free_text`:可选,默认 `false`。**默认隐藏文字输入提示**,符合"优先图形化选择"原则
-- 当模型确实需要开放回答(如自定义时间)时才设 `true`;并且建议在 `candidates` 里仍提供常见预设(如 19:00 / 20:00 / 21:00)+ 一个 `id: "custom"` `label: "其他时间"` 的 chip,点击后下一轮模型用 `final_response` 引导自由输入
+- `candidates[].subtitle`:可选,灰字次行(实体场景常用 `entity_id · state`;通用场景可放"依赖 X 集成"等 hint)
+- `allow_free_text`:可选,默认 `false`
+- `free_text_placeholder`:仅 `allow_free_text=true` 时使用,作为输入框 placeholder 文案,引导用户输入有用的具体内容;模型应该尽量给一个能让用户照葫芦画瓢的范例
+
+**`allow_free_text` 设置原则**(给模型 prompt 用):
+
+- 默认 `false`(图形化选择优先)
+- 但**当问题包含长尾可能性时,必须设 `true`**,典型场景:
+  - 时间(用户可能想"19:30"而不是 chip 里的整点)
+  - 日期/节假日(中国节假日不能被简单的"工作日/周末"二分)
+  - 自定义名称(自动化命名、设备别名)
+  - 数值阈值(温度、亮度等)
+  - 任何用户已经在历史里给出非 preset 答案的情况
+- chip 仍提供 3-4 个最常见预设,**输入框是真正的扩展位**而不是装饰
 
 向后兼容:旧形态 `{candidates: [{entity_id, name}]}` 在 `chat_session.py` 接收解析时做迁移,自动补成新形态(`id ← entity_id`,`label ← name`,`subtitle ← entity_id`)。
 
-**前端 chip 渲染规则**:
+**前端 chip + 输入框渲染规则**:
 
 - chip 横排或网格,**最小可点面积 44×44px**(满足 Apple HIG / WCAG 触屏指引,确保手机/平板墙板可点)
 - chip 字号 ≥ 14px,有明显边框/背景色,不要做成单色文字链接
 - `subtitle` 用 11–12px 灰字置于 `label` 下方(可选)
-- 若 `allow_free_text=true`,所有 chip 之下放一行小灰字 `"或者直接输入..."`,**非 chip 区不强调**
+- **`allow_free_text=true` 时,chips 下方出现一个真正可见的输入框**(不是 hint!):
+  - 输入框宽度 100%,高度 ≥ 40px,边框明显
+  - placeholder 用 `free_text_placeholder` 字段(如"或者输入更具体的条件,例如:除春节和国庆外都开")
+  - 输入框右侧有 `[发送]` 按钮(或 Enter 即发送)
+  - 输入框上方一行小灰字 "或者自定义:" 作为视觉分隔
+- `allow_free_text=false` 时,**完全不显示**输入框区域(避免干扰)
 - 用户点 chip 后:输入框被 chip 的 label 自动填入并立即发送,不要求二次确认(降低操作成本)
+- 用户在输入框打字后按发送:文字直接作为下一条用户消息
 
 ### 7.7 `automation_draft` 的 `rationale` 字段(必填)
 
@@ -474,7 +508,8 @@ get_environment_readiness:
 ```json
 {
   "items": [
-    {"id": "provider", "ok": true, "label": "Provider 连通", "hint": null, "links": []},
+    {"id": "provider", "ok": true, "label": "Provider 连通", "hint": null,
+     "links": [], "install_prompt": null},
     {
       "id": "device_tracker",
       "ok": false,
@@ -483,7 +518,8 @@ get_environment_readiness:
       "links": [
         {"text": "Companion App", "url": "https://companion.home-assistant.io/"},
         {"text": "蓝牙追踪", "url": "https://www.home-assistant.io/integrations/bluetooth_le_tracker/"}
-      ]
+      ],
+      "install_prompt": null
     },
     {
       "id": "xiaomi_miot",
@@ -492,7 +528,12 @@ get_environment_readiness:
       "hint": "没装 Xiaomi Miot Auto,小米生态识别会受限",
       "links": [
         {"text": "Xiaomi Miot Auto", "url": "https://github.com/al-one/hass-xiaomi-miot"}
-      ]
+      ],
+      "install_prompt": {
+        "title": "安装 Xiaomi Miot Auto",
+        "body": "<完整模板字符串,HAclaw 已知字段已替换,占位符保留 {{TODO_USER:...}}>",
+        "todo_user_fields": ["XIAOMI_EMAIL", "XIAOMI_PASSWORD"]
+      }
     }
   ],
   "advanced": [
@@ -501,7 +542,12 @@ get_environment_readiness:
       "ok": false,
       "label": "HACS",
       "hint": "门槛较高,通常通过 shell 命令安装;装好 HACS 后再通过 HACS 装小米/第三方集成",
-      "links": [{"text": "HACS 官方", "url": "https://hacs.xyz/"}]
+      "links": [{"text": "HACS 官方", "url": "https://hacs.xyz/"}],
+      "install_prompt": {
+        "title": "安装 HACS",
+        "body": "<完整模板字符串>",
+        "todo_user_fields": []
+      }
     }
   ],
   "dismissed": false,
@@ -509,7 +555,18 @@ get_environment_readiness:
 }
 ```
 
-`failing_required_count` 给前端用来直接渲染状态条 `⚠️N` 徽章,不必前端再数一遍。
+`failing_required_count` 给前端用来直接渲染状态条 `⚠️N` 徽章,不必前端再数一遍。`install_prompt` 字段为 `null` 表示该项无需安装(如已通过的 provider)或没有定义模板(如 device_tracker — 它需要装 mobile app/路由器集成,装哪种取决于用户偏好,模板太分散就先不做)。
+
+### 8.5 `install_prompt` 模板填充流程
+
+1. `tools/environment.py` 维护 `INSTALL_PROMPT_TEMPLATES: dict[str, str]`,key 是 `domain`(如 `xiaomi_miot`、`hacs`),value 是带占位符的模板字符串
+2. `get_environment_readiness` 在返回每个未通过的 item 前,调用 `render_install_prompt(domain)`:
+   - 替换 `{{HA_KNOWN: HA_CONFIG_DIR}}` → `hass.config.path()` 的实际路径
+   - 替换 `{{HA_KNOWN: HA_INSTALL_TYPE}}` → 从 `hass.config.config_source` 推断("Core" / "Container" / "Supervised" / "OS")
+   - **保留** `{{TODO_USER: <FIELD>}}` 不替换(由用户在他自己的 AI agent 那边填)
+   - **保留** `{{TODO_AGENT: <说明>}}` 不替换(给接收 agent 看的指引)
+3. 解析出所有 `{{TODO_USER: <FIELD>}}` 占位符,作为 `todo_user_fields` 列表返回(前端展示时高亮提示)
+4. 完整设计见 §19
 
 ## 9. 存在实体绑定
 
@@ -678,11 +735,16 @@ class ValidationResult:
     "service": "xiaomi_miot.set_something",
     "integration_name": "Xiaomi Miot Auto",
     "install_link": "https://github.com/al-one/hass-xiaomi-miot",
+    "install_prompt": {
+        "title": "安装 Xiaomi Miot Auto",
+        "body": "<完整模板字符串>",
+        "todo_user_fields": ["XIAOMI_EMAIL", "XIAOMI_PASSWORD"]
+    },
     "reason": "草稿用到了 xiaomi_miot 服务但未检测到这个集成"
 }
 ```
 
-`integration_name` 和 `install_link` 来自 `tools/environment.py` 里维护的常量映射(domain → 中文名 + 链接),与首次环境检查共用同一份;无映射的 domain `integration_name` 退化为 domain 字符串、`install_link` 为 `null`。
+`integration_name`、`install_link` 和 `install_prompt` 都来自 `tools/environment.py` 里维护的常量映射(domain → 中文名 + 链接 + 模板),与 §8 首次环境检查共用同一份;无映射的 domain `integration_name` 退化为 domain 字符串、`install_link` 为 `null`、`install_prompt` 为 `null`。
 
 实现:扫草稿里所有 `action[*].service`,对每个 service 取 domain,在已知集成 → 缺失列表里查;`hass.services.has_service(domain, service)` 失败的全部记录。
 
@@ -705,10 +767,10 @@ class ValidationResult:
 - `custom_components/haclaw/storage/conversations.py` — `conversations.json` 读写 + 滚动淘汰
 - `custom_components/haclaw/storage/presence.py` — `presence.json` 读写 + entity_id 校验
 - `custom_components/haclaw/storage/ui_state.py` — `ui_state.json`(env_check_dismissed 等)
-- `custom_components/haclaw/tools/environment.py` — 三项环境检测 + domain → integration_name/link 映射常量
+- `custom_components/haclaw/tools/environment.py` — 三项环境检测 + domain → integration_name/link 映射常量 + `INSTALL_PROMPT_TEMPLATES`(§19)+ `render_install_prompt(domain, hass)` 函数(替换 HA_KNOWN 占位符,保留 TODO_USER / TODO_AGENT)
 - `tests/test_protocol.py` — 5 种协议类型 + 非法 JSON + `ALLOWED_TYPES_BY_MODE` 三种模式各自的拒绝集合
 - `tests/test_chat_session.py` — 正常对话、协议失败重试、上下文截断、模式后缀拼接断言
-- `tests/test_environment.py` — 三项检测的 ok/缺失分支
+- `tests/test_environment.py` — 三项检测的 ok/缺失分支 + `render_install_prompt` 测试(HA_KNOWN 替换、TODO_USER 保留、未知 domain 返回 null)
 - `tests/test_presence.py` — list/get/bind 三服务,含错误 entity_id 拒绝
 - `tests/test_conversations_storage.py` — 滚动淘汰、单会话上限、超大文件清理
 - `tests/test_ui_state.py` — `ui_state.json` 读写、`last_mode` 非法值容错、`execute_mode_warning_seen` 持久化
@@ -734,13 +796,17 @@ class ValidationResult:
 - [ ] 点"全部跳过"后,刷新页面卡片不再自动弹,但顶部出现 ⚠️ 小红点
 - [ ] 输入"打开客厅灯"发送,看到"思考中..."然后变成模型回复气泡
 - [ ] 模型如果返回 `clarification`,看到候选 chip 卡;点 chip 自动作为下一条消息发送(无需二次确认)
-- [ ] chip 默认隐藏文字输入提示;只有 `allow_free_text=true` 时才显示"或直接输入..."灰字
+- [ ] `allow_free_text=false` 时,卡片**完全没有**输入框区域;`allow_free_text=true` 时,chip 下方有**真实可见的输入框 + 发送按钮**(不是小灰字 hint),placeholder 来自 `free_text_placeholder` 字段
 - [ ] chip 最小可点面积 ≥ 44×44px,字号 ≥ 14px(手机/墙板友好)
+- [ ] 模型在涉及节假日 / 时间 / 数值阈值的提问里设了 `allow_free_text=true`,用户能输入"除春节和国庆外都开"这种具体条件
+- [ ] 用户提到"节假日"时,模型会询问/检测 `workday` 集成,而不是默默生成不区分节假日的草稿
 - [ ] **自动化模式下,模糊请求(如"晚上开净化器")应该先看到 1-3 轮 clarification 而不是直接生成草稿**
 - [ ] 自动化模式下生成的 `automation_draft` 卡片**必须**展示"设计依据 rationale"区,列出 entities/trigger/conditions/actions/edge_cases 各项的来源
 - [ ] 模型如果返回 `automation_draft`,看到折叠卡;展开能看到 YAML + rationale;**自动化模式下** `审批写入` 按钮调用现有 `approve_automation_draft`,**计划模式下**按钮置灰且带提示
 - [ ] 若模型返回的 `automation_draft` 缺 `rationale`,后端重试 1 次后仍缺 → 卡片渲染但审批按钮**禁用**,带 `⚠️ 模型未提供设计依据` 警告
-- [ ] 草稿如缺失集成,卡片底部显示黄色警告 + 安装链接
+- [ ] 草稿如缺失集成,卡片底部显示黄色警告 + 安装链接 + `[📋 安装指令]` 按钮
+- [ ] 点 `[📋 安装指令]` 弹出**只读** modal,显示模板内容;HA_KNOWN 字段已自动填(灰底),TODO_USER 字段保留占位符(黄底);`[复制]` 按钮可用,toast 提示"已复制 · 粘贴到你的 AI agent · 黄底占位符在那边亲自填"
+- [ ] modal 文本不可编辑(防止用户在 HAclaw 里填凭据)
 - [ ] 切到执行模式时弹一次确认 dialog;输入框旁出现红色"⚠️ 实验中"标签;模型即使返回 `tool_call` 也只是灰行
 - [ ] 切换模式后下一条消息使用对应模式 prompt(可通过看后端日志或测试断言)
 - [ ] 模式切换后刷新页面,模式保持(`ui_state.json` 持久化)
@@ -755,6 +821,7 @@ class ValidationResult:
 - [ ] 审计日志不包含完整模型回复内容
 - [ ] HACS / Xiaomi / Mobile App 集成的安装动作完全没有发生(只检测 + 给链接)
 - [ ] 不存 MAC / IMEI / 手机号 / GPS 坐标
+- [ ] **凭据(API key / 账号密码 / token)永远不进 HAclaw**:不出现在输入框、对话历史、配置文件、日志、install_prompt modal 文本里(modal 里只有 `{{TODO_USER:}}` 占位符)
 - [ ] 模型尝试调用工具(`tool_call`)时,前端只显示灰行,后端不执行
 - [ ] `risk_confirmation` 的"确认执行"按钮在前端禁用,带提示
 - [ ] **执行模式即使被切到,B 阶段后端不路由任何 service call**(模型即使返回 `tool_call` 也只是回传给前端展示)
@@ -810,45 +877,55 @@ class ValidationResult:
 
 **对应议题**:用户提出"参考 Claude 的 asking-answer 逻辑,多询问用户,避免生成模糊不实用的自动化",并强调"优先图形化选择,避免输入"。
 
-### 18.1 设计四件套
+### 18.1 设计五件套
 
-1. **扩展 `clarification` schema**(§7.6) — 把它从"实体歧义专用"扩展为通用 multiple choice;字段 `candidates[].id/label/subtitle`,默认 `allow_free_text=false`(图形化选择优先,文字输入是 fallback);chip 最小 44×44px、字号 ≥ 14px;旧形态向后兼容
-2. **强化 `MODE_SUFFIX_AUTOMATION`**(§7.3.2) — 模型必须先用 clarification 问清 5 大维度(实体 / 触发 / 条件 / 动作参数 / 边缘情况)再生成 draft;一次只问 1 个维度;最多 4 轮;chip 优先;生成 draft 前要 final_response 摘要让用户校对
-3. **`automation_draft` 加 `rationale` 必填字段**(§7.7) — 列出每个设计点来自对话哪一轮的回答;模型不写 rationale 走重试;仍缺则前端禁用审批按钮 + 警告
-4. **前端 chip-first UX**(§6.2 表格 + §7.6 渲染规则) — 大 chip、明显边框、隐藏文字输入提示;用户点 chip 自动发送不二次确认
+1. **扩展 `clarification` schema**(§7.6) — 把它从"实体歧义专用"扩展为通用 multiple choice;字段 `candidates[].id/label/subtitle`;chip 最小 44×44px、字号 ≥ 14px;旧形态向后兼容
+2. **`allow_free_text=true` 时输入框是一等公民**(§7.6) — 不是隐藏在小灰字里,而是 chips 下方一个真实可见、≥40px 高的输入框 + `[发送]` 按钮;`free_text_placeholder` 字段给出具体范例(如"或者输入更具体的条件,例如:除春节和国庆外都开");模型在涉及节假日/时间/数值阈值/自定义命名时**必须**设 `allow_free_text=true`
+3. **强化 `MODE_SUFFIX_AUTOMATION`**(§7.3.2) — 模型必须先用 clarification 问清 5 大维度(实体 / 触发 / 条件 / 动作参数 / 边缘情况)再生成 draft;一次只问 1 个维度;最多 4 轮;chip 优先但开放问题留输入口;节假日类问题主动检测/询问 HA `workday` 集成;生成 draft 前要 final_response 摘要让用户校对
+4. **`automation_draft` 加 `rationale` 必填字段**(§7.7) — 列出每个设计点来自对话哪一轮的回答;模型不写 rationale 走重试;仍缺则前端禁用审批按钮 + 警告
+5. **前端 chip + 输入框组合 UX**(§6.2 表格 + §7.6 渲染规则) — 大 chip 在上,真输入框在下(`allow_free_text=true` 时);用户点 chip 自动发送不二次确认;用户也可在输入框打字补全 chip 没覆盖的长尾答案
 
-### 18.2 用户体验示例
+### 18.2 用户体验示例(含节假日 / 自由输入)
 
 ```
-用户:晚上开净化器
+用户:晚上开净化器,但节假日不开
 模型:[clarification] 哪台净化器?
        [客厅净化器 fan.mi_air_purifier_living · on]
        [卧室净化器 fan.mi_air_purifier_bedroom · off]
 
 用户(点 chip):客厅净化器
-模型:[clarification] 周末也开吗?
-       [周末也开] [只工作日] [只周末]
+模型:[clarification] 节假日识别需要 HA workday 集成,你想怎么处理?
+       [是,加上 workday] [先用工作日近似(不区分节假日)] [我自己后面装]
+       (allow_free_text=true,placeholder="或描述你的具体诉求,例如:只排除春节和国庆")
+       ↓ 输入框可见 ↓
 
-用户(点 chip):周末也开
+用户(在输入框打字):只排除春节和国庆,其他节假日照常开
+模型:[final_response] 你的需求超出 workday 默认能力。我建议两条路:
+       (1) 用 workday 全部节假日 → 简单但不能选;
+       (2) 自己写 condition: 不在春节假期 (1/22~1/29) 且不在国庆 (10/1~10/7) → 精确但要每年更新日期。
+       要走哪条?
+
+用户:第一条吧
 模型:[clarification] 几点开?
-       [19:00] [20:00] [21:00] [其他时间] (allow_free_text=true)
+       [19:00] [19:30] [20:00] [21:00] [其他时间]
+       (allow_free_text=true,placeholder="或者输入具体时间,例如 19:15")
 
 用户(点 chip):19:00
-模型:[final_response] 我理解你想要每天 19:00 打开 fan.mi_air_purifier_living(客厅净化器),无附加条件 — 我开始生成草稿。
+模型:[final_response] 我理解:每天 19:00 打开 fan.mi_air_purifier_living,但 workday=False(节假日)时不开 — 我开始生成草稿。
 
 用户:OK
 模型:[automation_draft]
-       title: 晚上 19 点开客厅净化器
-       (YAML)
+       title: 工作日晚上 7 点开客厅净化器
+       (YAML 含 condition: state of binary_sensor.workday is "on")
        rationale:
-         entities: fan.mi_air_purifier_living(用户在第 1 轮选了"客厅净化器")
-         trigger: 每天 19:00(用户在第 3 轮选了"19:00",并在第 2 轮确认"周末也开")
-         conditions: 无(用户未提任何附加条件)
+         entities: fan.mi_air_purifier_living(用户第 1 轮 chip 选)
+         trigger: 每天 19:00(用户第 4 轮 chip 选)
+         conditions: workday=on(用户第 3 轮选"用 workday 全部节假日")
          actions: fan.turn_on(默认 mode)
-         edge_cases: 未问及离线情况,默认 HA 触发即尝试
+         edge_cases: 未问及 workday 集成是否已配置中国大陆地区,默认假设是
 ```
 
-整轮对话用户**只打了 2 个字**("OK"),其它全是 chip 点击。
+整轮对话用户**点了 4 个 chip + 输入了 2 句话**(一句开放需求 + 一句"OK")。chip 处理"哪个净化器/几点/要不要加集成"这类有 preset 的问题;输入框处理"具体哪些节假日要排除"这类长尾问题。
 
 ### 18.3 与"避免模糊草稿"的关系
 
@@ -858,3 +935,125 @@ class ValidationResult:
 | 模型默认全天 vs 工作日不告知 | §7.3.2 必须先问 condition 维度;rationale 字段强制写"用户未提任何附加条件" |
 | 用户输入太模糊但模型硬猜 | §7.3.2 至多 4 轮 clarification 后才允许猜测,且必须 rationale 标注"假设了 X" |
 | 用户审批后才发现"原来这样啊" | rationale 区让用户在审批前看到完整推演链条,异常处可"丢弃后再试一次" |
+| 节假日 / 长尾时间 / 数值阈值无法用 chip 覆盖 | `allow_free_text=true` 升级:输入框真实可见,placeholder 给具体范例;模型 prompt 明令这些场景必须开 free_text |
+
+## 19. 新增设计:跨 AI agent 协作的安装指令模板(README 之外的扩展)
+
+**对应议题**:用户提出"对于需要安装的插件可以给出 prompt 让用户复制,对于账户名和密码可以给出占位符,让用户替换;复制给 Claude 或 Codex 自动帮用户安装"。
+
+### 19.1 设计要点
+
+HAclaw 自己**不安装、不收凭据**,但可以把"该装什么 + 怎么装 + 哪些字段要用户填"以一份**结构化模板**输出,让用户复制粘贴到他自己的 AI agent(Claude Code / Codex / 其他)在用户机器上完成安装。这是 agent 间协作的雏形:
+
+```
+HAclaw                用户              Claude Code / Codex
+   │                    │                       │
+   │ 缺 X 集成,这是模板 │                       │
+   │ ─────────────────► │                       │
+   │                    │ 复制 → 粘贴 → 替换占位符│
+   │                    │ ──────────────────────►│
+   │                    │                       │ shell 安装
+   │                    │                       │ 重启 HA
+   │                    │ ◄──────────────────────│ 报告完成
+   │ 重新检查环境 (用户点)│                       │
+   │ ◄──────────────────│                       │
+```
+
+凭据从头到尾**只在用户↔他的 agent 之间**流动,HAclaw 全程不接触。
+
+### 19.2 占位符约定
+
+| 占位符 | 含义 | 谁来填 | 前端高亮 |
+|--------|------|--------|---------|
+| `{{HA_KNOWN: <FIELD>}}` | HAclaw 已经探测到的事实(配置目录、部署类型) | HAclaw 后端在返回模板前已替换 | 灰底,提示"HAclaw 已自动填" |
+| `{{TODO_USER: <FIELD>}}` | 必须由用户在 AI agent 那边亲自给的(凭据等) | 用户对接收 agent 时口头/输入提供 | 黄底,提示"⚠️ 不要在 HAclaw 改,在 AI agent 那边给" |
+| `{{TODO_AGENT: <说明>}}` | 留给接收 agent 决定的(具体步骤、文件路径推断) | 接收 AI agent | 白底,无特殊高亮 |
+
+### 19.3 模板示例(放 `tools/environment.py` 的 `INSTALL_PROMPT_TEMPLATES`)
+
+**HACS**:
+
+```
+帮我在 Home Assistant 上安装 HACS(Home Assistant Community Store)。
+
+环境(HAclaw 已探测):
+- HA 配置目录: {{HA_KNOWN: HA_CONFIG_DIR}}
+- HA 部署类型: {{HA_KNOWN: HA_INSTALL_TYPE}}
+
+要求:
+1. 用 HACS 官方安装方式 https://hacs.xyz/docs/setup/download (依据上面的部署类型选对应路径)
+2. {{TODO_AGENT: 安装完成后告诉我下一步要做什么(进入 HA UI 添加 HACS 集成 + GitHub OAuth)}}
+3. **不要**把任何 token / 密码写入任何文件或 commit 到 git
+4. 不要绕过 HA 自身的认证流程,不要直接修改 .storage
+
+参考: https://hacs.xyz/docs/setup/download
+```
+
+**Xiaomi Miot Auto**(假设 HACS 已装):
+
+```
+帮我在 Home Assistant 上安装 Xiaomi Miot Auto(通过 HACS)。
+
+环境(HAclaw 已探测):
+- HA 配置目录: {{HA_KNOWN: HA_CONFIG_DIR}}
+- HA 部署类型: {{HA_KNOWN: HA_INSTALL_TYPE}}
+- HACS: 已安装
+
+凭据(运行时由我给你,不要写文件):
+- 小米账号邮箱: {{TODO_USER: XIAOMI_EMAIL}}
+- 小米账号密码: {{TODO_USER: XIAOMI_PASSWORD}}
+
+要求:
+1. 用 HACS 添加自定义仓库 https://github.com/al-one/hass-xiaomi-miot
+2. 在 HACS 里安装 "Xiaomi Miot Auto"
+3. 重启 HA
+4. 重启后引导我在 HA UI 添加 Xiaomi Miot 集成,我在那里输入上面两项凭据
+5. **绝不要**把上面两项凭据写到任何文件、commit、或 HA 配置文件;装完即丢,只用于这次 OAuth/登录
+6. {{TODO_AGENT: 完成后告诉我装好的设备数量}}
+
+参考: https://github.com/al-one/hass-xiaomi-miot
+```
+
+### 19.4 前端 modal
+
+布局:
+
+```
+┌────────────────────────────────────────────┐
+│ 安装指令 — Xiaomi Miot Auto                ✕│
+├────────────────────────────────────────────┤
+│ 粘贴到 Claude Code / Codex / 其他 AI agent│
+│ ⚠️ 黄底字段是占位符,在你的 AI agent 那边亲│
+│   自填,不要在这里改。                    │
+├────────────────────────────────────────────┤
+│ <模板内容,只读 textarea>                  │
+│ ...                                        │
+│ (HA_KNOWN 字段灰底高亮)                   │
+│ (TODO_USER 字段黄底高亮)                  │
+│ ...                                        │
+├────────────────────────────────────────────┤
+│  [📋 复制] (点后 toast)         [关闭]    │
+└────────────────────────────────────────────┘
+```
+
+约束:
+
+- textarea **只读**(`readonly` 属性),不允许编辑 — 防止用户在 HAclaw 里填凭据然后忘记清掉
+- 复制按钮把整个模板原文(含占位符)复制到剪贴板
+- 复制成功后 toast: `已复制 · 粘贴到你的 AI agent · 黄底占位符在那边亲自填`
+- modal 头部有蓝底说明栏解释占位符约定
+- 关闭 modal 不影响对话流
+
+### 19.5 不做(留给后续)
+
+- **不内嵌 HAclaw 后端 token**:即使 HAclaw 知道接收 agent 是 Claude Code,也不会把 HA 长效 token 塞进模板让远端 agent 调 HA API。装完后用户在 HA UI 走标准 OAuth/集成流即可。
+- **不做双向通道反馈**:远端 agent 装完后,用户回 HAclaw 点"重新检查环境"主动确认,HAclaw 不主动监听 agent 进度(避免新依赖 + 鉴权问题)。
+- **不为非必检项做模板**:`device_tracker` 这种"装哪个看用户偏好"的项暂不出模板;Aqara/Yeelight/Roborock/Dreame 等按需扩展。
+- **不出 dry-run 工具调用样板**:模板只描述目标 + 边界,不给具体 shell 命令(让接收 agent 自己决定,避免 HAclaw 出过期/错误的命令导致用户机器被搞坏)。
+
+### 19.6 安全清单(进 §3 + §14.2)
+
+- HAclaw 永远不在 modal 文本里出现完整凭据(只允许占位符)
+- HAclaw 永远不让用户编辑 modal 文本(`readonly`)
+- HAclaw 永远不发送 modal 内容到任何 LLM(模板生成不消耗 provider 配额)
+- 模板每次都从 `INSTALL_PROMPT_TEMPLATES` 常量重新渲染,不缓存中间状态
