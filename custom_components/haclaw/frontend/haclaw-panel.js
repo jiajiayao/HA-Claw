@@ -118,11 +118,34 @@ class HAclawPanel extends HTMLElement {
     }
     input.value = "";
     this._appendUserMessage(text);
+    this._sendChat(text);
   }
 
   _appendUserMessage(text) {
     this._messages.push({ kind: "user_text", text });
     this._render();
+  }
+
+  async _sendChat(text) {
+    this._busy = true;
+    this._messages.push({ kind: "thinking" });
+    this._render();
+    try {
+      const result = await this._hass.connection.sendMessagePromise({
+        type: "haclaw/chat",
+        conversation_id: this._conversationId,
+        user_message: text,
+        mode: this._mode,
+      });
+      this._messages.pop();
+      this._messages.push({ kind: "assistant_msg", payload: result.assistant_message });
+    } catch (err) {
+      this._messages.pop();
+      this._messages.push({ kind: "error", text: err?.message || "请求失败" });
+    } finally {
+      this._busy = false;
+      this._render();
+    }
   }
 
   _onChipClick(text) {
@@ -169,7 +192,25 @@ class HAclawPanel extends HTMLElement {
     if (m.kind === "user_text") {
       return this._html`<div class="bubble user">${m.text}</div>`;
     }
+    if (m.kind === "thinking") {
+      return `<div class="bubble assistant thinking">思考中...</div>`;
+    }
+    if (m.kind === "error") {
+      return this._html`<div class="bubble error">⚠️ ${m.text}</div>`;
+    }
+    if (m.kind === "assistant_msg") {
+      return this._renderAssistant(m.payload);
+    }
     return "";
+  }
+
+  _renderAssistant(payload) {
+    if (payload?.type === "final_response") {
+      const text = payload.message || "";
+      const display = text.replace(/^\[BIND_PRESENCE\]\s*/, "");
+      return this._html`<div class="bubble assistant">${display}</div>`;
+    }
+    return this._html`<div class="bubble assistant">${JSON.stringify(payload)}</div>`;
   }
 
   _render() {
@@ -423,6 +464,17 @@ class HAclawPanel extends HTMLElement {
         align-self: flex-start;
         background: var(--card-background-color);
         border: 1px solid var(--divider-color);
+      }
+
+      .bubble.thinking {
+        font-style: italic;
+        opacity: 0.6;
+      }
+
+      .bubble.error {
+        align-self: flex-start;
+        background: rgba(255, 193, 7, 0.15);
+        border: 1px solid #b88d00;
       }
 
       @media (max-width: 640px) {
