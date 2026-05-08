@@ -6,7 +6,7 @@ HAclaw 是一个面向中文用户的 Home Assistant AI Agent 插件，目标是
 
 ## 项目状态
 
-当前已进入 v1.0 开发阶段。第一批代码先落在可测试的安全地基上：Home Assistant 自定义集成骨架、统一 OpenAI-compatible provider、严格 JSON Agent 协议、服务风险分类和 Xiaomi 实体识别辅助。
+当前包版本为 `0.2.0`，仍属于 v1.0 正式发布前的 `0.x` 开发版本。`1.x` 只用于正式可发布版本；现阶段代码继续围绕 v1.0 目标迭代：Home Assistant 自定义集成、统一 OpenAI-compatible provider、严格 JSON Agent 协议、服务风险分类、侧边栏面板和自动化草稿闭环。
 
 | 路径 | 用途 |
 | --- | --- |

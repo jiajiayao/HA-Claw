@@ -1,6 +1,6 @@
 [project]
 name = "haclaw"
-version = "0.1.0"
+version = "0.2.0"
 description = "Chinese-first safe AI copilot for Home Assistant"
 requires-python = ">=3.12"
 
