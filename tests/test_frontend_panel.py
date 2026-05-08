@@ -76,7 +76,7 @@ def test_clarification_card_contract_is_present():
     assert "this._sendChat(label);" in source
     assert '.cand-free-send[data-card]' in source
     assert "this._sendChat(text);" in source
-    assert 'if (event.key === "Enter")' in source
+    assert 'if (event.key !== "Enter")' in source
     assert ".card {" in source
     assert ".cand-chips" in source
     assert ".cand-free-row" in source
@@ -99,8 +99,8 @@ def test_automation_draft_card_contract_is_present():
     assert '"create_automation_draft"' in source
     assert '"approve_automation_draft"' in source
     assert "confirmed: Boolean(payload.requires_confirmation)" in source
-    assert "[data-action='discard']" in source
-    assert "[data-action='edit']" in source
+    assert 'action === "discard"' in source
+    assert 'action === "edit"' in source
     assert "_toast(text)" in source
     assert ".card.draft .draft-head" in source
     assert ".draft-actions" in source
@@ -164,7 +164,7 @@ def test_presence_binding_contract_is_present():
     assert "只存 entity_id" in source
     assert "不会读取 MAC、手机号、GPS 坐标" in source
     assert '.cand-chip[data-presence]' in source
-    assert "_bindPresence(el.dataset.presence)" in source
+    assert "_bindPresence(presence.dataset.presence)" in source
     assert "this._presenceBound = true" in source
     assert ".card.presence .presence-list" in source
     assert ".card.presence.done" in source
@@ -186,6 +186,18 @@ def test_execute_mode_warning_contract_is_present():
 def test_settings_modal_and_history_drawer_contract_is_present():
     source = PANEL_JS.read_text(encoding="utf-8")
 
+    assert "this._onDelegatedClick = (event) => this._handlePanelClick(event);" in source
+    assert "this.addEventListener(\"click\", this._onDelegatedClick);" in source
+    assert "_handlePanelClick(event)" in source
+    assert 'this._closestPanelTarget(event, ".chip[data-chip]")' in source
+    assert 'this._closestPanelTarget(event, ".mode-chip[data-mode]")' in source
+    assert 'this._closestPanelTarget(event, "#send-btn")' in source
+    assert 'this._closestPanelTarget(event, "#open-settings")' in source
+    assert 'this._closestPanelTarget(event, "#open-drawer")' in source
+    assert 'this._closestPanelTarget(event, "#open-model-settings")' in source
+    assert 'this._closestPanelTarget(event, "#open-presence-bind")' in source
+    assert 'this._closestPanelTarget(event, "#open-env-status")' in source
+    assert 'this._closestPanelTarget(event, "[data-action]")' in source
     assert 'id="open-model-settings"' in source
     assert 'id="open-presence-bind"' in source
     assert 'id="open-env-status"' in source
@@ -196,11 +208,6 @@ def test_settings_modal_and_history_drawer_contract_is_present():
     assert ">☰ 历史</button>" in source
     assert "_openEnvironmentStatus()" in source
     assert "_openPresenceBinding()" in source
-    assert 'this.querySelector("#open-model-settings")?.addEventListener("click", () => this._openSettingsModal())' in source
-    assert 'this.querySelector("#open-presence-bind")?.addEventListener("click", () => this._openPresenceBinding())' in source
-    assert 'this.querySelector("#open-env-status")?.addEventListener("click", () => this._openEnvironmentStatus())' in source
-    assert 'this.querySelector("#open-settings")?.addEventListener("click", () => this._openSettingsModal())' in source
-    assert 'this.querySelector("#open-drawer")?.addEventListener("click", () => this._openDrawer())' in source
     assert "_openSettingsModal()" in source
     assert "当前模型:" in source
     assert 'id="new-model"' in source

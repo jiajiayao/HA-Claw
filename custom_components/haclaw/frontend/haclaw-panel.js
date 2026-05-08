@@ -12,6 +12,9 @@ class HAclawPanel extends HTMLElement {
     this._envState = null;
     this._busy = false;
     this._conversationId = `conv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    this._eventsBound = false;
+    this._onDelegatedClick = (event) => this._handlePanelClick(event);
+    this._onDelegatedKeydown = (event) => this._handlePanelKeydown(event);
     this._suggestionChips = [
       "打开客厅灯",
       "生成晚 7 点开净化器的自动化",
@@ -29,8 +32,27 @@ class HAclawPanel extends HTMLElement {
   }
 
   connectedCallback() {
+    this._ensurePanelEvents();
     this._render();
     this._refreshState();
+  }
+
+  disconnectedCallback() {
+    if (!this._eventsBound) {
+      return;
+    }
+    this.removeEventListener("click", this._onDelegatedClick);
+    this.removeEventListener("keydown", this._onDelegatedKeydown);
+    this._eventsBound = false;
+  }
+
+  _ensurePanelEvents() {
+    if (this._eventsBound) {
+      return;
+    }
+    this.addEventListener("click", this._onDelegatedClick);
+    this.addEventListener("keydown", this._onDelegatedKeydown);
+    this._eventsBound = true;
   }
 
   _restoreMode() {
@@ -883,95 +905,158 @@ class HAclawPanel extends HTMLElement {
   }
 
   _wireEvents() {
-    this.querySelectorAll(".chip[data-chip]").forEach((el) => {
-      el.addEventListener("click", () => this._onChipClick(el.dataset.chip));
-    });
-    this.querySelectorAll(".mode-chip[data-mode]").forEach((el) => {
-      el.addEventListener("click", () => this._switchMode(el.dataset.mode));
-    });
-    this.querySelectorAll(".cand-chip[data-label]").forEach((el) => {
-      el.addEventListener("click", () => {
-        const label = el.dataset.label;
-        this._appendUserMessage(label);
-        this._sendChat(label);
-      });
-    });
-    this.querySelectorAll(".cand-chip[data-presence]").forEach((el) => {
-      el.addEventListener("click", () => this._bindPresence(el.dataset.presence));
-    });
-    this.querySelectorAll(".cand-free-send[data-card]").forEach((el) => {
-      el.addEventListener("click", () => {
-        const card = el.dataset.card;
-        const input = this.querySelector(`.cand-free-input[data-card="${card}"]`);
-        const text = input?.value.trim();
-        if (!text) {
-          return;
-        }
-        input.value = "";
-        this._appendUserMessage(text);
-        this._sendChat(text);
-      });
-    });
-    this.querySelectorAll(".cand-free-input[data-card]").forEach((el) => {
-      el.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-          this.querySelector(`.cand-free-send[data-card="${el.dataset.card}"]`)?.click();
-        }
-      });
-    });
-    this.querySelectorAll(".btn-approve[data-card]").forEach((el) => {
-      el.addEventListener("click", () => this._onApproveDraft(el.closest(".card.draft")));
-    });
-    this.querySelectorAll(".card.draft [data-action='discard']").forEach((el) => {
-      el.addEventListener("click", () => {
-        const card = el.closest(".card.draft");
-        card?.classList.add("discarded");
-        const actions = card?.querySelector(".draft-actions");
-        if (actions) {
-          actions.innerHTML = '<span class="muted">已丢弃</span>';
-        }
-      });
-    });
-    this.querySelectorAll(".card.draft [data-action='edit']").forEach((el) => {
-      el.addEventListener("click", () => {
-        const card = el.closest(".card.draft");
-        const yaml = card?.querySelector(".draft-yaml pre")?.textContent || "";
-        const input = this.querySelector("#chat-input");
-        if (input) {
-          input.value = yaml;
-          input.focus();
-        }
-      });
-    });
-    this.querySelectorAll(".btn-install-prompt[data-domain]").forEach((el) => {
-      el.addEventListener("click", () => this._openInstallModal(el.dataset.domain));
-    });
-    this.querySelectorAll("[data-action='env-dismiss']").forEach((el) => {
-      el.addEventListener("click", () => this._dismissEnv());
-    });
-    this.querySelectorAll("[data-action='env-recheck']").forEach((el) => {
-      el.addEventListener("click", () => {
-        this._envCardShown = false;
-        this._messages = this._messages.filter((message) => message.kind !== "env_check");
-        try {
-          localStorage.removeItem("haclaw.env_dismissed");
-        } catch (_err) {
-          // Ignore storage failures in embedded HA contexts.
-        }
-        this._refreshState();
-      });
-    });
-    this.querySelector("#open-model-settings")?.addEventListener("click", () => this._openSettingsModal());
-    this.querySelector("#open-presence-bind")?.addEventListener("click", () => this._openPresenceBinding());
-    this.querySelector("#open-env-status")?.addEventListener("click", () => this._openEnvironmentStatus());
-    this.querySelector("#open-settings")?.addEventListener("click", () => this._openSettingsModal());
-    this.querySelector("#open-drawer")?.addEventListener("click", () => this._openDrawer());
-    this.querySelector("#send-btn")?.addEventListener("click", () => this._onSend());
-    this.querySelector("#chat-input")?.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        this._onSend();
+    this._ensurePanelEvents();
+  }
+
+  _closestPanelTarget(event, selector) {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return null;
+    }
+    const el = target.closest(selector);
+    return el && this.contains(el) ? el : null;
+  }
+
+  _handlePanelClick(event) {
+    const chip = this._closestPanelTarget(event, ".chip[data-chip]");
+    if (chip) {
+      this._onChipClick(chip.dataset.chip);
+      return;
+    }
+
+    const mode = this._closestPanelTarget(event, ".mode-chip[data-mode]");
+    if (mode) {
+      this._switchMode(mode.dataset.mode);
+      return;
+    }
+
+    const clarification = this._closestPanelTarget(event, ".cand-chip[data-label]");
+    if (clarification) {
+      const label = clarification.dataset.label;
+      this._appendUserMessage(label);
+      this._sendChat(label);
+      return;
+    }
+
+    const presence = this._closestPanelTarget(event, ".cand-chip[data-presence]");
+    if (presence) {
+      this._bindPresence(presence.dataset.presence);
+      return;
+    }
+
+    const freeSend = this._closestPanelTarget(event, ".cand-free-send[data-card]");
+    if (freeSend) {
+      this._submitClarificationFreeText(freeSend.dataset.card);
+      return;
+    }
+
+    const approve = this._closestPanelTarget(event, ".btn-approve[data-card]");
+    if (approve) {
+      this._onApproveDraft(approve.closest(".card.draft"));
+      return;
+    }
+
+    const action = this._closestPanelTarget(event, "[data-action]");
+    if (action) {
+      this._handlePanelAction(action);
+      return;
+    }
+
+    const install = this._closestPanelTarget(event, ".btn-install-prompt[data-domain]");
+    if (install) {
+      this._openInstallModal(install.dataset.domain);
+      return;
+    }
+
+    if (this._closestPanelTarget(event, "#open-model-settings")) {
+      this._openSettingsModal();
+      return;
+    }
+    if (this._closestPanelTarget(event, "#open-presence-bind")) {
+      this._openPresenceBinding();
+      return;
+    }
+    if (this._closestPanelTarget(event, "#open-env-status")) {
+      this._openEnvironmentStatus();
+      return;
+    }
+    if (this._closestPanelTarget(event, "#open-settings")) {
+      this._openSettingsModal();
+      return;
+    }
+    if (this._closestPanelTarget(event, "#open-drawer")) {
+      this._openDrawer();
+      return;
+    }
+    if (this._closestPanelTarget(event, "#send-btn")) {
+      this._onSend();
+    }
+  }
+
+  _handlePanelKeydown(event) {
+    if (event.key !== "Enter") {
+      return;
+    }
+    const freeInput = this._closestPanelTarget(event, ".cand-free-input[data-card]");
+    if (freeInput) {
+      event.preventDefault();
+      this._submitClarificationFreeText(freeInput.dataset.card);
+      return;
+    }
+    if (this._closestPanelTarget(event, "#chat-input")) {
+      event.preventDefault();
+      this._onSend();
+    }
+  }
+
+  _submitClarificationFreeText(card) {
+    const input = this.querySelector(`.cand-free-input[data-card="${card}"]`);
+    const text = input?.value.trim();
+    if (!text) {
+      return;
+    }
+    input.value = "";
+    this._appendUserMessage(text);
+    this._sendChat(text);
+  }
+
+  _handlePanelAction(actionEl) {
+    const action = actionEl.dataset.action;
+    if (action === "env-dismiss") {
+      this._dismissEnv();
+      return;
+    }
+    if (action === "env-recheck") {
+      this._envCardShown = false;
+      this._messages = this._messages.filter((message) => message.kind !== "env_check");
+      try {
+        localStorage.removeItem("haclaw.env_dismissed");
+      } catch (_err) {
+        // Ignore storage failures in embedded HA contexts.
       }
-    });
+      this._refreshState();
+      return;
+    }
+    const card = actionEl.closest(".card.draft");
+    if (!card) {
+      return;
+    }
+    if (action === "discard") {
+      card.classList.add("discarded");
+      const actions = card.querySelector(".draft-actions");
+      if (actions) {
+        actions.innerHTML = '<span class="muted">已丢弃</span>';
+      }
+      return;
+    }
+    if (action === "edit") {
+      const yaml = card.querySelector(".draft-yaml pre")?.textContent || "";
+      const input = this.querySelector("#chat-input");
+      if (input) {
+        input.value = yaml;
+        input.focus();
+      }
+    }
   }
 
   _styles() {
