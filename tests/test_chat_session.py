@@ -13,6 +13,7 @@ from custom_components.haclaw.agent.chat_session import (
     run_single_turn,
 )
 from custom_components.haclaw.const import MODE_AUTOMATION, MODE_PLAN
+from custom_components.haclaw.storage.conversations import append_message
 
 
 def _make_provider(responses: list[str]) -> MagicMock:
@@ -162,6 +163,73 @@ async def test_run_single_turn_returns_device_picker_for_matching_entities(
         "allow_free_text": False,
     }
     provider.chat_with_usage.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_single_turn_skips_preflight_when_conversation_has_history(
+    tmp_path: Path,
+) -> None:
+    storage = tmp_path / "conv.json"
+    append_message(storage, "c1", {"role": "user", "content": "生成开灯自动化"})
+    append_message(
+        storage,
+        "c1",
+        {
+            "role": "assistant",
+            "type": "clarification",
+            "content": {
+                "type": "clarification",
+                "message": "请选择设备",
+                "candidates": [{"id": "light.living_room", "label": "客厅灯"}],
+            },
+        },
+    )
+    provider = _make_provider([
+        json.dumps({
+            "type": "automation_draft",
+            "title": "晚间开灯",
+            "automation": {
+                "alias": "晚间开灯",
+                "trigger": [{"platform": "time", "at": "19:30:00"}],
+                "action": [
+                    {
+                        "service": "light.turn_on",
+                        "target": {"entity_id": "light.living_room"},
+                    }
+                ],
+            },
+            "rationale": {
+                "entities": ["light.living_room"],
+                "trigger": "19:30",
+                "conditions": [],
+                "actions": ["打开客厅灯"],
+                "edge_cases": "无",
+            },
+        })
+    ])
+
+    result = await run_single_turn(
+        conversations_path=storage,
+        ui_state_path=tmp_path / "ui.json",
+        presence_path=tmp_path / "presence.json",
+        conversation_id="c1",
+        user_message="好的,就用那个灯,19:30 触发",
+        mode=MODE_AUTOMATION,
+        provider_client=provider,
+        model_name="mimo",
+        entity_context="当前 HA 可控制设备实体: light.living_room",
+        has_controllable_entities=True,
+        entity_candidates=[
+            {
+                "id": "light.living_room",
+                "label": "客厅灯",
+                "subtitle": "light.living_room · light · off",
+            }
+        ],
+    )
+
+    assert result["assistant_message"]["type"] == "automation_draft"
+    provider.chat_with_usage.assert_awaited_once()
 
 
 @pytest.mark.asyncio

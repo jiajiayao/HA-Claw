@@ -68,6 +68,7 @@ async def run_single_turn(
     preflight_msg = _preflight_automation_entity_selection(
         user_message=user_message,
         mode=mode,
+        history=history,
         has_controllable_entities=has_controllable_entities,
         entity_candidates=entity_candidates or [],
     )
@@ -170,9 +171,13 @@ def _preflight_automation_entity_selection(
     *,
     user_message: str,
     mode: str,
+    history: list[dict[str, Any]],
     has_controllable_entities: bool,
     entity_candidates: list[dict[str, str]],
 ) -> dict[str, Any] | None:
+    if history:
+        return None
+
     if mode != MODE_AUTOMATION or not _looks_like_device_automation_request(
         user_message
     ):
