@@ -257,3 +257,28 @@ def test_mobile_breakpoint_contract_is_present():
     assert "width: 100%" in mobile
     assert ".modal.drawer-panel" in mobile
     assert "max-width: 100%" in mobile
+
+
+def test_mobile_breakpoint_hides_top_controls_in_drawer_menu():
+    source = PANEL_JS.read_text(encoding="utf-8")
+    mobile = source.split("@media (max-width: 640px)", maxsplit=1)[1]
+    hide_block = mobile.split(".empty h2", maxsplit=1)[0]
+
+    assert "#open-settings" in hide_block
+    assert "#open-presence-bind" in hide_block
+    assert "#open-env-status" in hide_block
+    assert "display: none" in hide_block
+
+
+def test_drawer_contains_mobile_top_control_entries():
+    source = PANEL_JS.read_text(encoding="utf-8")
+
+    assert 'id="drawer-open-settings"' in source
+    assert "设置" in source
+    assert 'id="drawer-recheck-env"' in source
+    assert "重新检查环境" in source
+    assert 'id="drawer-rebind-presence"' in source
+    assert "重新绑定存在感应" in source
+    assert "this._openSettingsModal();" in source
+    assert "this._openEnvironmentStatus();" in source
+    assert "this._openPresenceBinding();" in source

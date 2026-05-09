@@ -782,6 +782,11 @@ class HAclawPanel extends HTMLElement {
           <span>对话历史</span>
           <button class="modal-close">✕</button>
         </div>
+        <div class="drawer-actions">
+          <button class="drawer-action" id="drawer-open-settings" type="button">⚙ 设置</button>
+          <button class="drawer-action" id="drawer-recheck-env" type="button">重新检查环境</button>
+          <button class="drawer-action" id="drawer-rebind-presence" type="button">重新绑定存在感应</button>
+        </div>
         <div class="drawer-body" id="drawer-list">加载中...</div>
         <div class="modal-foot">
           <button class="btn-primary" id="new-chat">+ 新对话</button>
@@ -791,6 +796,18 @@ class HAclawPanel extends HTMLElement {
     document.body.appendChild(overlay);
     overlay.querySelectorAll(".modal-close").forEach((button) => {
       button.addEventListener("click", () => overlay.remove());
+    });
+    overlay.querySelector("#drawer-open-settings")?.addEventListener("click", () => {
+      overlay.remove();
+      this._openSettingsModal();
+    });
+    overlay.querySelector("#drawer-recheck-env")?.addEventListener("click", () => {
+      overlay.remove();
+      this._openEnvironmentStatus();
+    });
+    overlay.querySelector("#drawer-rebind-presence")?.addEventListener("click", () => {
+      overlay.remove();
+      this._openPresenceBinding();
     });
     overlay.querySelector("#new-chat")?.addEventListener("click", () => {
       this._conversationId = `conv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -1718,6 +1735,25 @@ class HAclawPanel extends HTMLElement {
         padding: 12px 16px;
       }
 
+      .drawer-actions {
+        border-bottom: 1px solid var(--divider-color);
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px 16px;
+      }
+
+      .drawer-action {
+        background: var(--secondary-background-color);
+        border: 1px solid var(--divider-color);
+        border-radius: 6px;
+        color: var(--primary-text-color);
+        cursor: pointer;
+        min-height: 38px;
+        padding: 8px 10px;
+        text-align: left;
+      }
+
       .drawer-row {
         border-bottom: 1px solid var(--divider-color);
         font-size: 13px;
@@ -1741,12 +1777,18 @@ class HAclawPanel extends HTMLElement {
 
         .topbar .right {
           gap: 6px;
-          justify-content: flex-start;
-          width: 100%;
+          justify-content: flex-end;
+          width: auto;
         }
 
         .top-action {
           min-height: 36px;
+        }
+
+        #open-settings,
+        #open-presence-bind,
+        #open-env-status {
+          display: none;
         }
 
         .empty h2 {
