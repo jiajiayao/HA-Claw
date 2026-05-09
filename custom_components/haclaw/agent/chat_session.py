@@ -14,6 +14,7 @@ from ..const import (
 )
 from ..storage import conversations as conv_store
 from ..storage.presence import load_binding
+from ..storage.redaction import redact_sensitive
 from .prompts import build_system_prompt
 from .protocol import ProtocolError, parse_assistant_json, validate_for_mode
 
@@ -61,7 +62,7 @@ async def run_single_turn(
     history = _load_history_messages(conversations_path, conversation_id)
     conv_store.append_message(
         conversations_path, conversation_id,
-        {"role": "user", "content": user_message},
+        {"role": "user", "content": redact_sensitive(user_message)},
     )
 
     preflight_msg = _preflight_automation_entity_selection(
@@ -76,7 +77,7 @@ async def run_single_turn(
             {
                 "role": "assistant",
                 "type": preflight_msg["type"],
-                "content": preflight_msg,
+                "content": redact_sensitive(preflight_msg),
             },
         )
         return {
@@ -99,7 +100,11 @@ async def run_single_turn(
 
     conv_store.append_message(
         conversations_path, conversation_id,
-        {"role": "assistant", "type": assistant_msg["type"], "content": assistant_msg},
+        {
+            "role": "assistant",
+            "type": assistant_msg["type"],
+            "content": redact_sensitive(assistant_msg),
+        },
     )
 
     return {

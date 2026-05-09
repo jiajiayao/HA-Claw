@@ -50,6 +50,54 @@ async def test_run_single_turn_returns_parsed_message(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_single_turn_redacts_assistant_tool_call_args_before_persisting(
+    tmp_path: Path,
+) -> None:
+    storage = tmp_path / "conv.json"
+    provider = _make_provider([
+        '{"type":"tool_call","tool":"x","args":{"api_key":"sk-real-secret-123"}}'
+    ])
+
+    await run_single_turn(
+        conversations_path=storage,
+        ui_state_path=tmp_path / "ui.json",
+        presence_path=tmp_path / "presence.json",
+        conversation_id="c1",
+        user_message="打开设备",
+        mode="execute",
+        provider_client=provider,
+        model_name="mimo",
+    )
+
+    saved_text = storage.read_text(encoding="utf-8")
+    assert "sk-real-secret-123" not in saved_text
+    saved = json.loads(saved_text)
+    assistant = saved["conversations"][0]["messages"][1]
+    assert assistant["content"]["type"] == "tool_call"
+
+
+@pytest.mark.asyncio
+async def test_run_single_turn_redacts_user_message_before_persisting(
+    tmp_path: Path,
+) -> None:
+    storage = tmp_path / "conv.json"
+    provider = _make_provider(['{"type":"final_response","message":"ok"}'])
+
+    await run_single_turn(
+        conversations_path=storage,
+        ui_state_path=tmp_path / "ui.json",
+        presence_path=tmp_path / "presence.json",
+        conversation_id="c1",
+        user_message="帮我测试 api_key=sk-leaked",
+        mode=MODE_AUTOMATION,
+        provider_client=provider,
+        model_name="mimo",
+    )
+
+    assert "sk-leaked" not in storage.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
 async def test_run_single_turn_recommends_adding_devices_when_none_exist(
     tmp_path: Path,
 ) -> None:
