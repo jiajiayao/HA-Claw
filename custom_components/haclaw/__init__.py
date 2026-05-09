@@ -263,18 +263,29 @@ async def _async_handle_ws_chat(
         entity_context = build_entity_context(hass)
         entity_candidates = find_entity_candidates(hass, msg["user_message"])
         has_controllable_entities = bool(list_controllable_entities(hass, limit=1))
+        mode = msg.get("mode", DEFAULT_MODE)
         result = await run_single_turn(
             conversations_path=_storage_path(hass, CONVERSATIONS_FILE),
             ui_state_path=_storage_path(hass, UI_STATE_FILE),
             presence_path=_storage_path(hass, PRESENCE_FILE),
             conversation_id=msg["conversation_id"],
             user_message=msg["user_message"],
-            mode=msg.get("mode", DEFAULT_MODE),
+            mode=mode,
             provider_client=client,
             model_name=str(provider.get(CONF_MODEL, "")),
             entity_context=entity_context,
             has_controllable_entities=has_controllable_entities,
             entity_candidates=entity_candidates,
+        )
+        await _async_append_audit(
+            hass,
+            {
+                "tool": "chat",
+                "mode": mode,
+                "model": str(provider.get(CONF_MODEL, "")),
+                "result": result["assistant_message"]["type"],
+                "risk_level": result["assistant_message"].get("risk_level"),
+            },
         )
     except ChatSessionError as err:
         connection.send_error(msg["id"], "haclaw_chat_error", str(err))

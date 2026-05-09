@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -425,6 +426,53 @@ class IntegrationServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("米家空气净化器", kwargs["entity_context"])
             self.assertEqual(kwargs["entity_candidates"][0]["id"], "fan.mi_air_purifier")
             self.assertTrue(kwargs["has_controllable_entities"])
+
+    async def test_ws_chat_appends_metadata_only_audit_entry(self):
+        handler = getattr(haclaw, "_async_handle_ws_chat", None)
+        self.assertIsNotNone(handler)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            hass = FakeHass(tmp_dir)
+            connection = FakeConnection()
+            fake = {
+                "conversation_id": "c1",
+                "assistant_message": {
+                    "type": "final_response",
+                    "message": "assistant secret body",
+                },
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                "model": "mimo",
+            }
+
+            with (
+                patch.object(haclaw, "_build_provider_client", return_value=FakeClient()),
+                patch.object(
+                    haclaw,
+                    "run_single_turn",
+                    new=AsyncMock(return_value=fake),
+                    create=True,
+                ),
+            ):
+                await handler.__wrapped__(
+                    hass,
+                    connection,
+                    {
+                        "id": 1,
+                        "type": WS_TYPE_CHAT,
+                        "conversation_id": "c1",
+                        "user_message": "用户消息正文",
+                        "mode": "automation",
+                    },
+                )
+
+            audit_path = Path(tmp_dir) / "haclaw" / "audit_log.jsonl"
+            audit_text = audit_path.read_text(encoding="utf-8")
+            audit_entry = json.loads(audit_text.strip().splitlines()[-1])
+            self.assertEqual(audit_entry["tool"], "chat")
+            self.assertEqual(audit_entry["mode"], "automation")
+            self.assertEqual(audit_entry["model"], "mimo-v2-flash")
+            self.assertEqual(audit_entry["result"], "final_response")
+            self.assertNotIn("用户消息正文", audit_text)
+            self.assertNotIn("assistant secret body", audit_text)
 
     def test_ws_chat_schema_rejects_invalid_mode(self):
         handler = getattr(haclaw, "_async_handle_ws_chat", None)
