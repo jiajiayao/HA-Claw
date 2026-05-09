@@ -1,8 +1,8 @@
 # HAclaw Chat UI v1.0 (Range B) — Agent Handoff Note
 
-**Status as of 2026-05-08, commit `145a67a`**: Phase 1-4 complete, Phase 5/6 pending. Working tree clean, 93 tests green.
+**Status as of 2026-05-08, commit `fa8e944` (Range B complete + post-review fixes)**: Phases 1-6 done, post-review hardening landed. Working tree clean, 127 tests green. Branch `codex/haclaw-chat-ui-range-b` ahead of `origin/main` by ~28 commits, all local, not yet pushed.
 
-This note captures **session-only decisions that aren't obvious from the plan or git log alone**. Read this before resuming work.
+This note captures **session-only decisions that aren't obvious from the plan or git log alone**. Read this before resuming work — including before starting Range C (`docs/superpowers/specs/2026-05-08-haclaw-agent-loop-tools-design.md`).
 
 ---
 
@@ -106,6 +106,45 @@ Phase 5 (Task 15-24) rewrites `frontend/haclaw-panel.js` incrementally. Each tas
 
 If you change behavior the user might miss in manual review, write a brief note in your task report stating "needs UI verification at: [specific paths]".
 
+### 3.7 Entity preflight is **partial Range C, intentionally landed in Range B** (Option A scope decision)
+
+During Range B execution, Codex introduced an **automation-mode entity preflight** that the plan had explicitly deferred to Range C. After review, the user accepted it as-is (Option A: keep, default-on, no feature flag).
+
+**What it does:** When a user sends a device-keyword automation request (`灯 / 净化器 / 空调 / ...`) on the **first** turn of an automation-mode conversation, the WS chat handler scans `hass.states` for matching controllable entities and either:
+
+- Returns a `clarification` with chip candidates (skipping the LLM), or
+- Returns a `final_response` telling the user no controllable devices are found (and to install a Xiaomi/MIoT integration).
+
+This avoids the LLM hallucinating `entity_id`s and gives chip-first UX from the first message.
+
+**Files involved (don't duplicate in Range C):**
+
+- `custom_components/haclaw/tools/entity.py` — `list_controllable_entities` / `find_entity_candidates` / `build_entity_context`. Only reads `entity_id`, `friendly_name`, `state`, `domain` — never GPS/SSID/MAC/token. CONTROLLABLE_DOMAINS = `light, switch, fan, climate, cover, media_player, vacuum`.
+- `custom_components/haclaw/agent/chat_session.py` — `_preflight_automation_entity_selection` + history gate (`if history: return None` — preflight only on first turn, otherwise LLM takes over).
+- `custom_components/haclaw/agent/prompts.py` — extra `entity_context` parameter on `build_system_prompt`, injected into the system prompt so the LLM sees the device list and is told "不要要求用户手输 entity_id".
+- `custom_components/haclaw/__init__.py` `_async_handle_ws_chat` — calls `build_entity_context`, `find_entity_candidates`, `list_controllable_entities` and forwards them as `entity_context` / `entity_candidates` / `has_controllable_entities` kwargs to `run_single_turn`.
+- `tests/test_entity.py` (new, 77 lines) and 4 chat-session tests covering preflight + history gating + redaction.
+
+**Implication for Range C work:**
+
+- **Don't re-invent** entity discovery. Build on top of these helpers; extend `CONTROLLABLE_DOMAINS` if needed for a new domain.
+- **Sanitization is currently shallow** (relies on the small CONTROLLABLE_DOMAINS allowlist and on the fact that `state` for these domains is usually `on` / `off` / numeric). If Range C broadens domains (e.g., `sensor`), import `xiaomi.SENSITIVE_ATTRIBUTE_FRAGMENTS` and apply it before serializing.
+- The `_DEVICE_RULES` keyword list (`净化器/灯/空调/窗帘/扫地/插座/风扇/音箱` + English synonyms) is intentionally narrow. Range C may broaden it.
+- The history gate (`if history: return None`) is intentional — Range C's full Agent loop should drive multi-turn entity refinement via `clarification` / `tool_call`, not preflight short-circuit.
+
+### 3.8 Post-review hardening (4 fix commits, 2026-05-08)
+
+After Codex completed Tasks 13-24, a code review surfaced 4 must-fix issues. They are all merged at the head of this branch:
+
+| Commit | Fix |
+|--------|-----|
+| `c82f2af` | `fix: redact secrets in conversations.json before persistence` — extracts `_redact()` from `audit_log.py` into a shared `storage/redaction.py` module with regex-based inline redaction; both user input and assistant output go through it before persistence. |
+| `d94fa60` | `feat: emit audit log entries for chat turns (metadata only)` — `_async_handle_ws_chat` now writes `{tool: "chat", mode, model, result, risk_level}` to audit log per AGENTS.md §14. **Never** records user/assistant message content. |
+| `9f59d58` | `fix: skip preflight entity picker when conversation already has history` — adds `if history: return None` to `_preflight_automation_entity_selection` so multi-turn automation requests (e.g., user says "好的就用那个灯,19:30") don't repeatedly short-circuit back to device selection. |
+| `fa8e944` | `feat(panel): collapse top controls into drawer on mobile per spec §5.2` — at `<640px`, hides ⚙ / presence / env top buttons via media query and adds equivalent entries to the history drawer. |
+
+The redaction module (`storage/redaction.py`) is now the canonical sanitizer for any code that persists or logs user/model data. **Range C should reuse it**, not roll its own.
+
 ---
 
 ## 4. Safety boundaries (from user's brief — don't violate)
@@ -161,9 +200,14 @@ git log --oneline 9860b55..HEAD
 
 ## 8. Where to start
 
-1. Read `docs/superpowers/plans/2026-05-08-haclaw-chat-ui-v1.md` from Task 13 onwards.
-2. Read `tests/test_integration_services.py` to absorb the FakeHass pattern (and FakeConfigEntries / FakeEntry classes added in Task 11/12).
-3. Read `custom_components/haclaw/__init__.py` to see existing service registration pattern (you'll add `_async_register_ws_commands` alongside `_async_register_services`).
-4. Begin Task 13 with TDD: write failing test for `haclaw/chat` WS command, then implement.
+**Range B is complete.** If you are starting Range C (full Agent loop / tool execution / safety layer / history-based recommendation):
+
+1. Read `docs/superpowers/specs/2026-05-08-haclaw-agent-loop-tools-design.md` (Range C spec).
+2. Read this whole HANDOFF — pay extra attention to **§3.7 (entity preflight)** and **§3.8 (post-review hardening)**, which describe the partial-Range-C work that already landed in Range B.
+3. Read `custom_components/haclaw/storage/redaction.py` — reuse `redact_sensitive()` for any new persistence path.
+4. Read `tests/test_integration_services.py` to absorb the `FakeHass` / `FakeConnection` test pattern (existing 8 fake classes cover most needs).
+5. Inspect `custom_components/haclaw/agent/chat_session.py:_call_with_retry` — the existing single-turn loop is the foundation Range C extends into a multi-turn iteration loop.
+
+If you are picking up an unfinished Range B fix instead, scan `git log --oneline 145a67a..HEAD` to see what shipped after the last handoff.
 
 Good luck. The user is detail-oriented and prefers terse, evidence-based progress reports over enthusiasm. Show your work.
